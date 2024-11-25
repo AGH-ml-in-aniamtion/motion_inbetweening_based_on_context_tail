@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import argparse
+import pandas as pd
 
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,101 +42,111 @@ if __name__ == "__main__":
     dataset, data_loader = train_utils.init_bvh_dataset(
         config, args.dataset, device=device, shuffle=False)
 
-    # initialize model
-    model = ContextTransformer(config["model"]).to(device)
-    # load checkpoint
-    epoch, iteration = train_utils.load_checkpoint(config, model)
+    results = {}
+    past_context = [2,3,4,5]  #range(1, 11)
 
-    if args.index is None:
-        res = context_model.eval_on_dataset(
-            config, data_loader, model, args.trans, args.debug,
-            args.post_processing)
+    for i in past_context:
+        config["train"]["past_context"] = i
+        # initialize model
+        model = ContextTransformer(config["model"]).to(device)
+        # load checkpoint
+        epoch, iteration = train_utils.load_checkpoint(config, model)
 
-        if args.debug:
-            gpos_loss, gquat_loss, npss_loss, loss_data = res
+        if args.index is None:
+            res = context_model.eval_on_dataset(
+                config, data_loader, model, args.trans, args.debug,
+                args.post_processing)
 
-            json_path = "{}_{}_{}_ranking.json".format(
-                args.config, args.dataset, args.trans)
-            with open(json_path, "w") as fh:
-                json.dump(loss_data, fh)
+            if args.debug:
+                gpos_loss, gquat_loss, npss_loss, loss_data = res
+
+                json_path = "{}_{}_{}_ranking.json".format(
+                    args.config, args.dataset, args.trans)
+                with open(json_path, "w") as fh:
+                    json.dump(loss_data, fh)
+            else:
+                gpos_loss, gquat_loss, npss_loss = res
+
+            print(config["name"])
+            print("trans {}: gpos: {:.4f}, gquat: {:.4f}, npss: {:.4f}{}".format(
+                args.trans, gpos_loss, gquat_loss, npss_loss,
+                " (w/ post-processing)" if args.post_processing else ""))
+            results[i] = (gpos_loss, gquat_loss, npss_loss)
         else:
-            gpos_loss, gquat_loss, npss_loss = res
+            indices = config["indices"]
+            context_len = config["train"]["context_len"]
+            target_idx = context_len + args.trans
+            seq_slice = slice(context_len, target_idx)
+            window_len = context_len + args.trans + 2
+            dtype = dataset.dtype
 
-        print(config["name"])
-        print("trans {}: gpos: {:.4f}, gquat: {:.4f}, npss: {:.4f}{}".format(
-            args.trans, gpos_loss, gquat_loss, npss_loss,
-            " (w/ post-processing)" if args.post_processing else ""))
-    else:
-        indices = config["indices"]
-        context_len = config["train"]["context_len"]
-        target_idx = context_len + args.trans
-        seq_slice = slice(context_len, target_idx)
-        window_len = context_len + args.trans + 2
-        dtype = dataset.dtype
+            # attention mask
+            atten_mask = context_model.get_attention_mask(
+                window_len, context_len, target_idx, device) 
 
-        # attention mask
-        atten_mask = context_model.get_attention_mask(
-            window_len, context_len, target_idx, device)
+            mean, std = context_model.get_train_stats_torch(
+                config, dtype, device)
+            mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
+                config, dataset.dtype, device)
 
-        mean, std = context_model.get_train_stats_torch(
-            config, dtype, device)
-        mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
-            config, dataset.dtype, device)
+            data = dataset[args.index]
+            (positions, rotations, global_positions, global_rotations,
+                foot_contact, parents, data_idx) = data
 
-        data = dataset[args.index]
-        (positions, rotations, global_positions, global_rotations,
-            foot_contact, parents, data_idx) = data
+            positions = positions[..., :window_len, :, :]
+            rotations = rotations[..., :window_len, :, :, :]
+            global_positions = global_positions[..., :window_len, :, :]
+            global_rotations = global_rotations[..., :window_len, :, :, :]
+            foot_contact = foot_contact[..., :window_len, :]
 
-        positions = positions[..., :window_len, :, :]
-        rotations = rotations[..., :window_len, :, :, :]
-        global_positions = global_positions[..., :window_len, :, :]
-        global_rotations = global_rotations[..., :window_len, :, :, :]
-        foot_contact = foot_contact[..., :window_len, :]
+            positions = positions.unsqueeze(0)
+            rotations = rotations.unsqueeze(0)
+            positions, rotations = data_utils.to_start_centered_data(
+                positions, rotations, context_len)
 
-        positions = positions.unsqueeze(0)
-        rotations = rotations.unsqueeze(0)
-        positions, rotations = data_utils.to_start_centered_data(
-            positions, rotations, context_len)
+            pos_new, rot_new = context_model.evaluate(
+                model, positions, rotations, seq_slice, indices,
+                mean, std, atten_mask, args.post_processing)
 
-        pos_new, rot_new = context_model.evaluate(
-            model, positions, rotations, seq_slice, indices,
-            mean, std, atten_mask, args.post_processing)
-
-        gpos_batch_loss, gquat_batch_loss, _, _ = \
-            benchmark.get_rmi_style_batch_loss(
-                positions, rotations, pos_new, rot_new, parents,
-                context_len, target_idx, mean_rmi, std_rmi)
-
-        print(config["name"])
-        print("trans: {}, idx: {}, gpos: {:.4f}, gquat: {:.4f}{}".format(
-            args.trans, args.index, gpos_batch_loss[0], gquat_batch_loss[0],
-            " (w/ post-processing)" if args.post_processing else ""))
-
-        json_path_gt = "./{}_{}_{}_{}_gt.json".format(
-            args.config, args.dataset, args.trans, args.index)
-        visualization.save_data_to_json(
-            json_path_gt, positions[0], rotations[0],
-            foot_contact, parents)
-
-        json_path = "./{}_{}_{}_{}.json".format(
-            args.config, args.dataset, args.trans, args.index)
-        visualization.save_data_to_json(
-            json_path, pos_new[0], rot_new[0],
-            foot_contact, parents)
-
-        if args.debug:
-            print("\nDEBUG:")
-            pos_interp, rot_interp = benchmark.get_interpolated_local_pos_rot(
-                positions, rotations, seq_slice)
-            gpos_interp_loss, gquat_interp_loss, _, _ = \
+            gpos_batch_loss, gquat_batch_loss, _, _ = \
                 benchmark.get_rmi_style_batch_loss(
-                    positions, rotations, pos_interp, rot_interp, parents,
+                    positions, rotations, pos_new, rot_new, parents,
                     context_len, target_idx, mean_rmi, std_rmi)
-            print("interp: gpos: {:.4f}, gquat: {:.4f}".format(
-                gpos_interp_loss[0], gquat_interp_loss[0]))
 
-            json_path_inter = "./{}_{}_{}_{}_inter.json".format(
+            print(config["name"])
+            print("trans: {}, idx: {}, gpos: {:.4f}, gquat: {:.4f}{}".format(
+                args.trans, args.index, gpos_batch_loss[0], gquat_batch_loss[0],
+                " (w/ post-processing)" if args.post_processing else ""))
+
+            json_path_gt = "./{}_{}_{}_{}_gt.json".format(
                 args.config, args.dataset, args.trans, args.index)
             visualization.save_data_to_json(
-                json_path_inter, pos_interp[0], rot_interp[0],
+                json_path_gt, positions[0], rotations[0],
                 foot_contact, parents)
+
+            json_path = "./{}_{}_{}_{}.json".format(
+                args.config, args.dataset, args.trans, args.index)
+            visualization.save_data_to_json(
+                json_path, pos_new[0], rot_new[0],
+                foot_contact, parents)
+
+            if args.debug:
+                print("\nDEBUG:")
+                pos_interp, rot_interp = benchmark.get_interpolated_local_pos_rot(
+                    positions, rotations, seq_slice)
+                gpos_interp_loss, gquat_interp_loss, _, _ = \
+                    benchmark.get_rmi_style_batch_loss(
+                        positions, rotations, pos_interp, rot_interp, parents,
+                        context_len, target_idx, mean_rmi, std_rmi)
+                print("interp: gpos: {:.4f}, gquat: {:.4f}".format(
+                    gpos_interp_loss[0], gquat_interp_loss[0]))
+
+                json_path_inter = "./{}_{}_{}_{}_inter.json".format(
+                    args.config, args.dataset, args.trans, args.index)
+                visualization.save_data_to_json(
+                    json_path_inter, pos_interp[0], rot_interp[0],
+                    foot_contact, parents)
+    results = pd.DataFrame(results).T
+    results.columns = ["gpos", "gquat", "npss"]
+    print(results)
+    results.to_csv("results.csv")

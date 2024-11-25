@@ -8,7 +8,7 @@ from motion_inbetween.data import bvh, utils_np
 
 class BvhDataSet(Dataset):
     def __init__(self, bvh_folder, actors, window=50, offset=1,
-                 start_frame=0, device="cpu", dtype=torch.float32):
+                 start_frame=0, past_context=2, device="cpu", dtype=torch.float32):
         """
         Bvh data set.
 
@@ -29,6 +29,7 @@ class BvhDataSet(Dataset):
         self.window = window
         self.offset = offset
         self.start_frame = start_frame
+        self.past_context = past_context
         self.device = device
         self.dtype = dtype
 

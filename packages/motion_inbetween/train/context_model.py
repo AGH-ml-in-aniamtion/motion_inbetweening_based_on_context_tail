@@ -107,7 +107,7 @@ def get_data_mask(window_len, d_mask, constrained_slices,
     # 0 for unknown and 1 for known
     data_mask = torch.zeros((window_len, d_mask), device=device, dtype=dtype)
     data_mask[:context_len, :] = 1
-    data_mask[target_idx, :] = 1
+    data_mask[target_idx:, :] = 1
 
     for s in constrained_slices:
         data_mask[midway_targets, s] = 1
@@ -379,8 +379,9 @@ def eval_on_dataset(config, data_loader, model, trans_len,
     indices = config["indices"]
     context_len = config["train"]["context_len"]
     target_idx = context_len + trans_len
+    past_context =  config["train"]["past_context"] if "past_context" in config["train"] else 2
     seq_slice = slice(context_len, target_idx)
-    window_len = context_len + trans_len + 2
+    window_len = context_len + trans_len + past_context
 
     mean, std = get_train_stats_torch(config, dtype, device)
     mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
