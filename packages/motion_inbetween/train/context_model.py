@@ -88,11 +88,11 @@ def get_midway_targets(seq_slice, midway_targets_amount, midway_targets_p):
     return list(targets)
 
 
-def get_attention_mask(window_len, context_len, target_idx, device,
+def get_attention_mask(window_len, context_len, target_idx, device, past_context,
                        midway_targets=()):
     atten_mask = torch.ones(window_len, window_len,
                             device=device, dtype=torch.bool)
-    atten_mask[:, target_idx] = False
+    atten_mask[:, target_idx:target_idx+past_context+1] = False
     atten_mask[:, :context_len] = False
     atten_mask[:, midway_targets] = False
     atten_mask = atten_mask.unsqueeze(0)
@@ -102,7 +102,7 @@ def get_attention_mask(window_len, context_len, target_idx, device,
 
 
 def get_data_mask(window_len, d_mask, constrained_slices,
-                  context_len, target_idx, device, dtype,
+                  context_len, target_idx, device, dtype, past_context,
                   midway_targets=()):
     # 0 for unknown and 1 for known
     data_mask = torch.zeros((window_len, d_mask), device=device, dtype=dtype)
@@ -198,7 +198,7 @@ def train(config):
     max_trans = config["train"]["max_trans"]
     midway_targets_amount = config["train"]["midway_targets_amount"]
     midway_targets_p = config["train"]["midway_targets_p"]
-
+    
     loss_avg = 0
     p_loss_avg = 0
     r_loss_avg = 0
@@ -211,30 +211,35 @@ def train(config):
             (positions, rotations, global_positions, global_rotations,
              foot_contact, parents, data_idx) = data
             parents = parents[0]
+            
 
             positions, rotations = data_utils.to_start_centered_data(
                 positions, rotations, context_len)
             global_rotations, global_positions = data_utils.fk_torch(
                 rotations, positions, parents)
 
+            # randomize past context length
+            past_context = random.randint(0, context_len//2)
+            beg_context = context_len - past_context
+
             # randomize transition length
             trans_len = random.randint(min_trans, max_trans)
-            target_idx = context_len + trans_len
-            seq_slice = slice(context_len, target_idx)
-
+            target_idx = beg_context + trans_len
+            seq_slice = slice(beg_context, target_idx)
+            
             # get random midway target frames
             midway_targets = get_midway_targets(
                 seq_slice, midway_targets_amount, midway_targets_p)
 
             # attention mask
             atten_mask = get_attention_mask(
-                window_len, context_len, target_idx, device,
+                window_len, beg_context, target_idx, device, past_context,
                 midway_targets=midway_targets)
 
             # data mask
             data_mask = get_data_mask(
                 window_len, model.d_mask, model.constrained_slices,
-                context_len, target_idx, device, dtype, midway_targets)
+                beg_context, target_idx, device, dtype,past_context=past_context, midway_targets=midway_targets)
 
             # position index relative to context and target frame
             keyframe_pos_idx = get_keyframe_pos_indices(
