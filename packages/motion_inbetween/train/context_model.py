@@ -174,7 +174,7 @@ def train(config):
         train_utils.get_val_datasets(config, device, shuffle=False)
 
     # visualization
-    vis, info_idx = train_utils.init_visdom(config)
+    #vis, info_idx = train_utils.init_visdom(config)
 
     # initialize model
     model = ContextTransformer(config["model"]).to(device)
@@ -295,7 +295,7 @@ def train(config):
             if iteration % config["train"]["checkpoint_interval"] == 0:
                 train_utils.save_checkpoint(config, model, epoch, iteration,
                                             optimizer, scheduler)
-                vis.save([config["visdom"]["env"]])
+                #vis.save([config["visdom"]["env"]])
 
             if iteration % info_interval == 0:
                 r_loss_avg /= info_interval
@@ -364,12 +364,12 @@ def train(config):
                             config, model, epoch, iteration,
                             optimizer, scheduler, suffix=".min", n_ckp=3)
 
-                train_utils.to_visdom(vis, info_idx, contents)
+                #train_utils.to_visdom(vis, info_idx, contents)
                 r_loss_avg = 0
                 p_loss_avg = 0
                 smooth_loss_avg = 0
                 loss_avg = 0
-                info_idx += 1
+                #info_idx += 1
 
             iteration += 1
 
