@@ -383,10 +383,11 @@ def eval_on_dataset(config, data_loader, model, trans_len,
 
     indices = config["indices"]
     context_len = config["train"]["context_len"]
-    target_idx = context_len + trans_len
-    past_context =  config["train"]["past_context"] if "past_context" in config["train"] else 2
+    target_idx = context_len
+    past_context = context_len // 2
     seq_slice = slice(context_len, target_idx)
     window_len = context_len + trans_len + past_context
+    
 
     mean, std = get_train_stats_torch(config, dtype, device)
     mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
@@ -394,7 +395,7 @@ def eval_on_dataset(config, data_loader, model, trans_len,
 
     # attention mask
     atten_mask = get_attention_mask(
-        window_len, context_len, target_idx, device)
+        window_len, context_len, target_idx, past_context, device)
 
     data_indexes = []
     gpos_loss = []
