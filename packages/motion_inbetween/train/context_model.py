@@ -326,7 +326,7 @@ def train(config):
                     ["iterations", "iterations", iteration],
                 ]
 
-                if iteration % eval_interval == 0:
+                if iteration % 200 == 0:
                     for trans in eval_trans:
                         print("trans: {}\n".format(trans))
 
