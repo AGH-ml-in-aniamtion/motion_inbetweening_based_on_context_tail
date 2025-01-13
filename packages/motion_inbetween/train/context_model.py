@@ -395,7 +395,7 @@ def eval_on_dataset(config, data_loader, model, trans_len,
 
     # attention mask
     atten_mask = get_attention_mask(
-        window_len, context_len, target_idx, past_context, device)
+        window_len, context_len, target_idx, device, past_context)
 
     data_indexes = []
     gpos_loss = []
