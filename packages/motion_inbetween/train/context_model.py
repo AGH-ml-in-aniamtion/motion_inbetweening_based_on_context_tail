@@ -383,10 +383,10 @@ def eval_on_dataset(config, data_loader, model, trans_len,
 
     indices = config["indices"]
     context_len = config["train"]["context_len"]
-    target_idx = context_len
-    past_context = context_len // 2
+    target_idx = context_len + trans_len
+    past_context = 0
     seq_slice = slice(context_len, target_idx)
-    window_len = context_len + trans_len + past_context
+    window_len = context_len + trans_len + past_context + 2
     
 
     mean, std = get_train_stats_torch(config, dtype, device)
@@ -509,6 +509,8 @@ def evaluate(model, positions, rotations, seq_slice, indices,
     window_len = positions.shape[-3]
     context_len = seq_slice.start
     target_idx = seq_slice.stop
+    
+    #TODO: add past context to evaluation
 
     # If current context model is not trained with constrants,
     # ignore midway_targets.
@@ -537,7 +539,7 @@ def evaluate(model, positions, rotations, seq_slice, indices,
         # data mask (seq, 1)
         data_mask = get_data_mask(
             window_len, model.d_mask, model.constrained_slices, context_len,
-            target_idx, device, dtype, midway_targets)
+            target_idx, device, dtype, past_context=0, midway_targets=midway_targets)
 
         keyframe_pos_idx = get_keyframe_pos_indices(
             window_len, seq_slice, dtype, device)
