@@ -1,4 +1,5 @@
 import os
+import csv
 import pickle
 import random
 import numpy as np
@@ -107,7 +108,7 @@ def get_data_mask(window_len, d_mask, constrained_slices,
     # 0 for unknown and 1 for known
     data_mask = torch.zeros((window_len, d_mask), device=device, dtype=dtype)
     data_mask[:context_len, :] = 1
-    data_mask[target_idx:, :] = 1
+    data_mask[target_idx:target_idx+past_context+1, :] = 1
 
     for s in constrained_slices:
         data_mask[midway_targets, s] = 1
@@ -157,7 +158,7 @@ def set_placeholder_root_pos(x, seq_slice, midway_targets, p_slice):
 
 
 def train(config):
-    indices = config["indices"]
+    indices = config["indices"] 
     info_interval = config["visdom"]["interval"]
     eval_interval = config["visdom"]["interval_eval"]
     eval_trans = config["visdom"]["eval_trans"]
@@ -190,6 +191,12 @@ def train(config):
         config, model, optimizer, scheduler)
 
     # training stats
+    """
+    The mean and standard deviation
+    of rotation and position representations are extracted to make these
+    metrics comparable between datasets with different angle and distance units. The motion data is normalized before calculating the
+    benchmark metrics.
+    """
     mean, std = get_train_stats_torch(config, dtype, device)
 
     window_len = config["datasets"]["train"]["window"]
@@ -212,15 +219,15 @@ def train(config):
              foot_contact, parents, data_idx) = data
             parents = parents[0]
             
-
-            positions, rotations = data_utils.to_start_centered_data(
-                positions, rotations, context_len)
-            global_rotations, global_positions = data_utils.fk_torch(
-                rotations, positions, parents)
-
             # randomize past context length
             past_context = random.randint(0, context_len//2)
             beg_context = context_len - past_context
+
+
+            positions, rotations = data_utils.to_start_centered_data( 
+                positions, rotations, beg_context) #data is centered to end of context. must be beg ctx instead of whole
+            global_rotations, global_positions = data_utils.fk_torch(
+                rotations, positions, parents)
 
             # randomize transition length
             trans_len = random.randint(min_trans, max_trans)
@@ -246,15 +253,15 @@ def train(config):
                 window_len, seq_slice, dtype, device)
 
             # prepare model input
-            x_gt = get_model_input(positions, rotations)
-            x_gt_zscore = (x_gt - mean) / std
-
+            x_gt = get_model_input(positions, rotations) #go into quaternions (?)
+            x_gt_zscore = (x_gt - mean) / std # normalize data
+        
             x = torch.cat([
                 x_gt_zscore * data_mask,
                 data_mask.expand(*x_gt_zscore.shape[:-1], data_mask.shape[-1])
-            ], dim=-1)
+            ], dim=-1) #mask data and add mask to input as additional feature
 
-            x = set_placeholder_root_pos(x, seq_slice, midway_targets, p_slice)
+            x = set_placeholder_root_pos(x, seq_slice, midway_targets, p_slice) # should not change i think
 
             # calculate model output y
             optimizer.zero_grad()
@@ -266,14 +273,14 @@ def train(config):
 
             y = y * std + mean
 
-            pos_new = train_utils.get_new_positions(positions, y, indices)
-            rot_new = train_utils.get_new_rotations(y, indices)
+            pos_new = train_utils.get_new_positions(positions, y, indices) # TODO: what is this?
+            rot_new = train_utils.get_new_rotations(y, indices) #TODO: what is this?
 
             grot_new, gpos_new = data_utils.fk_torch(rot_new, pos_new, parents)
 
-            r_loss = train_utils.cal_r_loss(x_gt, y, seq_slice, indices)
-            smooth_loss = train_utils.cal_smooth_loss(gpos_new, seq_slice)
-            p_loss = train_utils.cal_p_loss(
+            r_loss = train_utils.cal_r_loss(x_gt, y, seq_slice, indices) #rotation loss: 
+            smooth_loss = train_utils.cal_smooth_loss(gpos_new, seq_slice) #forward kinematics loss
+            p_loss = train_utils.cal_p_loss( #position loss
                 global_positions, gpos_new, seq_slice)
 
             # loss
@@ -326,43 +333,7 @@ def train(config):
                     ["iterations", "iterations", iteration],
                 ]
 
-                if iteration % 200 == 0:
-                    for trans in eval_trans:
-                        print("trans: {}\n".format(trans))
 
-                        for i in range(len(val_data_loaders)):
-                            ds_name = val_dataset_names[i]
-                            ds_loader = val_data_loaders[i]
-
-                            gpos_loss, gquat_loss, npss_loss = eval_on_dataset(
-                                config, ds_loader, model, trans)
-
-                            contents.extend([
-                                [ds_name, "gpos_{}".format(trans),
-                                 gpos_loss],
-                                [ds_name, "gquat_{}".format(trans),
-                                 gquat_loss],
-                                [ds_name, "npss_{}".format(trans),
-                                 npss_loss],
-                            ])
-                            print("{}:\ngpos: {:6f}, gquat: {:6f}, "
-                                  "npss: {:.6f}".format(ds_name, gpos_loss,
-                                                        gquat_loss, npss_loss))
-
-                            if ds_name == "val":
-                                # After iterations, val_loss will be the
-                                # sum of losses on dataset named "val"
-                                # with transition length equals to last value
-                                # in eval_interval.
-                                val_loss = (gpos_loss + gquat_loss +
-                                            npss_loss)
-
-                    if min_val_loss > val_loss:
-                        min_val_loss = val_loss
-                        # save min loss checkpoint
-                        train_utils.save_checkpoint(
-                            config, model, epoch, iteration,
-                            optimizer, scheduler, suffix=".min", n_ckp=3)
 
                 #train_utils.to_visdom(vis, info_idx, contents)
                 r_loss_avg = 0
@@ -372,6 +343,56 @@ def train(config):
                 #info_idx += 1
 
             iteration += 1
+            
+        
+        for trans in eval_trans:
+            for i in range(len(val_data_loaders)):
+                ds_name = val_dataset_names[i]
+                ds_loader = val_data_loaders[i]
+
+                gpos_loss, gquat_loss, npss_loss = eval_on_dataset(
+                    config, ds_loader, model, trans)
+
+                contents.extend([
+                    [ds_name, "gpos_{}".format(trans),
+                        gpos_loss],
+                    [ds_name, "gquat_{}".format(trans),
+                        gquat_loss],
+                    [ds_name, "npss_{}".format(trans),
+                        npss_loss],
+                ])
+                
+                if ds_name == "val":
+                    # After iterations, val_loss will be the
+                    # sum of losses on dataset named "val"
+                    # with transition length equals to last value
+                    # in eval_interval.
+                    val_loss = (gpos_loss + gquat_loss +
+                                npss_loss)
+                    
+                    stats_folder = config["workspace"]
+                    csv_filename = os.path.join(stats_folder, f"transition_{trans}.csv")
+                    file_exists = os.path.isfile(csv_filename)
+
+                    # Append results to the CSV file
+                    with open(csv_filename, mode="a", newline="") as file:
+                        writer = csv.writer(file)
+                        
+                        # Write header only if file is newly created
+                        if not file_exists:
+                            writer.writerow(["Epoch", "Metric", "Loss"])
+
+                        # Append results with metric names without the transition suffix
+                        writer.writerow([epoch, "gpos", gpos_loss])
+                        writer.writerow([epoch, "gquat", gquat_loss])
+                        writer.writerow([epoch, "npss", npss_loss])
+
+        if min_val_loss > val_loss:
+            min_val_loss = val_loss
+            # save min loss checkpoint
+            train_utils.save_checkpoint(
+                config, model, epoch, iteration,
+                optimizer, scheduler, suffix=".min", n_ckp=3)
 
         epoch += 1
 
@@ -384,9 +405,13 @@ def eval_on_dataset(config, data_loader, model, trans_len,
     indices = config["indices"]
     context_len = config["train"]["context_len"]
     target_idx = context_len + trans_len
+
+    #past context    
     past_context = 0
+    beg_context = context_len - past_context
+    
     seq_slice = slice(context_len, target_idx)
-    window_len = context_len + trans_len + past_context + 2
+    window_len = beg_context + trans_len + past_context + 2
     
 
     mean, std = get_train_stats_torch(config, dtype, device)
@@ -395,7 +420,7 @@ def eval_on_dataset(config, data_loader, model, trans_len,
 
     # attention mask
     atten_mask = get_attention_mask(
-        window_len, context_len, target_idx, device, past_context)
+        window_len, beg_context, target_idx, device, past_context)
 
     data_indexes = []
     gpos_loss = []
@@ -415,11 +440,11 @@ def eval_on_dataset(config, data_loader, model, trans_len,
         foot_contact = foot_contact[..., :window_len, :]
 
         positions, rotations = data_utils.to_start_centered_data(
-            positions, rotations, context_len)
+            positions, rotations, beg_context)
 
         pos_new, rot_new = evaluate(
             model, positions, rotations, seq_slice,
-            indices, mean, std, atten_mask, post_process)
+            indices, mean, std, atten_mask, past_context, post_process)
 
         (gpos_batch_loss, gquat_batch_loss,
          npss_batch_loss, npss_batch_weights) = \
@@ -460,7 +485,7 @@ def eval_on_dataset(config, data_loader, model, trans_len,
 
 
 def evaluate(model, positions, rotations, seq_slice, indices,
-             mean, std, atten_mask, post_process=True,
+             mean, std, atten_mask, past_context, post_process=True, 
              midway_targets=()):
     """
     Generate transition animation.
@@ -507,11 +532,9 @@ def evaluate(model, positions, rotations, seq_slice, indices,
     dtype = positions.dtype
     device = positions.device
     window_len = positions.shape[-3]
-    context_len = seq_slice.start
+    beg_context = seq_slice.start
     target_idx = seq_slice.stop
     
-    #TODO: add past context to evaluation
-
     # If current context model is not trained with constrants,
     # ignore midway_targets.
     if midway_targets and not model.constrained_slices:
@@ -538,8 +561,8 @@ def evaluate(model, positions, rotations, seq_slice, indices,
 
         # data mask (seq, 1)
         data_mask = get_data_mask(
-            window_len, model.d_mask, model.constrained_slices, context_len,
-            target_idx, device, dtype, past_context=0, midway_targets=midway_targets)
+            window_len, model.d_mask, model.constrained_slices, beg_context,
+            target_idx, device, dtype, past_context, midway_targets=midway_targets)
 
         keyframe_pos_idx = get_keyframe_pos_indices(
             window_len, seq_slice, dtype, device)

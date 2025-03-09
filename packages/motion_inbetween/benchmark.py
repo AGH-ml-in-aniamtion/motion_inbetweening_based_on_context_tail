@@ -90,16 +90,16 @@ def get_npss_loss_batch(gt_data, pred_data, eps=1e-8):
 
 
 def get_rmi_style_batch_loss(positions, rotations, pos_new, rot_new,
-                             parents, context_len, target_idx,
+                             parents, beg_context, target_idx,
                              mean_rmi, std_rmi):
-    seq_slice = slice(context_len, target_idx)
+    seq_slice = slice(beg_context, target_idx)
 
     # Convert to mean centered data in order to be compatible
     # to Robust Motion Inbetween metrics.
 
     # Ground Truth ---------------------------------------------------------
     positions, rotations, root_pos_offset, root_rot_offset = \
-        data_utils.to_mean_centered_data(positions, rotations, context_len,
+        data_utils.to_mean_centered_data(positions, rotations, beg_context,
                                          return_offset=True)
     global_rotations, global_positions = data_utils.fk_torch(
         rotations, positions, parents)

@@ -78,7 +78,7 @@ def save_checkpoint(config, model, epoch, iteration, optimizer,
             os.replace(old_path, new_path)
 
     torch.save(checkpoint, checkpoint_path)
-    print("Save checkpoint to {}.".format(checkpoint_path))
+    #print("Save checkpoint to {}.".format(checkpoint_path))
 
 
 def init_bvh_dataset(config, dataset_name, device,
