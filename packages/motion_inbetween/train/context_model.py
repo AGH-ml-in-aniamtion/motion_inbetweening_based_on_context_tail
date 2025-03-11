@@ -65,7 +65,7 @@ def get_train_stats(config, use_cache=True, stats_folder=None,
         with open(stats_path, "wb") as fh:
             pickle.dump(train_stats, fh)
 
-        print("Train stats wrote to {}".format(stats_path))
+#        print("Train stats wrote to {}".format(stats_path))
 
     return train_stats["mean"], train_stats["std"]
 
@@ -156,16 +156,14 @@ def set_placeholder_root_pos(x, seq_slice, midway_targets, p_slice):
         )
     return x
 
-
 def train(config):
     indices = config["indices"] 
     info_interval = config["visdom"]["interval"]
     eval_interval = config["visdom"]["interval_eval"]
     eval_trans = config["visdom"]["eval_trans"]
     p_slice = slice(indices["p_start_idx"], indices["p_end_idx"])
-
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+    
     # dataset
     dataset, data_loader = train_utils.init_bvh_dataset(
         config, "train", device, shuffle=True)
@@ -173,9 +171,6 @@ def train(config):
 
     val_dataset_names, _, val_data_loaders = \
         train_utils.get_val_datasets(config, device, shuffle=False)
-
-    # visualization
-    #vis, info_idx = train_utils.init_visdom(config)
 
     # initialize model
     model = ContextTransformer(config["model"]).to(device)
@@ -220,7 +215,7 @@ def train(config):
             parents = parents[0]
             
             # randomize past context length
-            past_context = random.randint(0, context_len//2)
+            past_context = random.randint(0, context_len-1)
             beg_context = context_len - past_context
 
 
@@ -317,31 +312,11 @@ def train(config):
                           epoch, iteration, lr, loss_avg,
                           r_loss_avg, p_loss_avg, smooth_loss_avg))
 
-                contents = [
-                    ["loss", "r_loss", r_loss_avg],
-                    ["loss", "p_loss", p_loss_avg],
-                    ["loss", "smooth_loss", smooth_loss_avg],
-                    ["loss weighted", "r_loss",
-                        r_loss_avg * config["weights"]["rw"]],
-                    ["loss weighted", "p_loss",
-                        p_loss_avg * config["weights"]["pw"]],
-                    ["loss weighted", "smooth_loss",
-                        smooth_loss_avg * config["weights"]["sw"]],
-                    ["loss weighted", "loss", loss_avg],
-                    ["learning rate", "lr", lr],
-                    ["epoch", "epoch", epoch],
-                    ["iterations", "iterations", iteration],
-                ]
-
-
-
-                #train_utils.to_visdom(vis, info_idx, contents)
                 r_loss_avg = 0
                 p_loss_avg = 0
                 smooth_loss_avg = 0
                 loss_avg = 0
                 #info_idx += 1
-
             iteration += 1
             
         
@@ -350,19 +325,11 @@ def train(config):
                 ds_name = val_dataset_names[i]
                 ds_loader = val_data_loaders[i]
 
-                gpos_loss, gquat_loss, npss_loss = eval_on_dataset(
-                    config, ds_loader, model, trans)
-
-                contents.extend([
-                    [ds_name, "gpos_{}".format(trans),
-                        gpos_loss],
-                    [ds_name, "gquat_{}".format(trans),
-                        gquat_loss],
-                    [ds_name, "npss_{}".format(trans),
-                        npss_loss],
-                ])
-                
                 if ds_name == "val":
+                    
+                    gpos_loss, gquat_loss, npss_loss = eval_on_dataset(
+                        config, ds_loader, model, trans)
+
                     # After iterations, val_loss will be the
                     # sum of losses on dataset named "val"
                     # with transition length equals to last value
@@ -398,7 +365,7 @@ def train(config):
 
 
 def eval_on_dataset(config, data_loader, model, trans_len,
-                    debug=False, post_process=True):
+                    past_context=0, debug=False, post_process=True, past_context_additive=False):
     device = data_loader.dataset.device
     dtype = data_loader.dataset.dtype
 
@@ -406,9 +373,10 @@ def eval_on_dataset(config, data_loader, model, trans_len,
     context_len = config["train"]["context_len"]
     target_idx = context_len + trans_len
 
-    #past context    
-    past_context = 0
-    beg_context = context_len - past_context
+    if past_context_additive:
+        beg_context = context_len
+    else:
+        beg_context = context_len - past_context
     
     seq_slice = slice(context_len, target_idx)
     window_len = beg_context + trans_len + past_context + 2

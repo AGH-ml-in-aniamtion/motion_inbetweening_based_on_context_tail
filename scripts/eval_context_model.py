@@ -43,7 +43,7 @@ if __name__ == "__main__":
         config, args.dataset, device=device, shuffle=False)
 
     results = {}
-    past_context = [2,3,4,5]  #range(1, 11)
+    past_context = range(0,config["train"]["context_len"]-1)  #range(1, 11)
 
     for i in past_context:
         config["train"]["past_context"] = i
@@ -54,8 +54,8 @@ if __name__ == "__main__":
 
         if args.index is None:
             res = context_model.eval_on_dataset(
-                config, data_loader, model, args.trans, args.debug,
-                args.post_processing)
+                config, data_loader, model, args.trans, i, args.debug,
+                args.post_processing, True)
 
             if args.debug:
                 gpos_loss, gquat_loss, npss_loss, loss_data = res
