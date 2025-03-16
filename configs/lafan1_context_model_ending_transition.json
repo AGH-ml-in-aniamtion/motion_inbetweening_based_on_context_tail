@@ -1,5 +1,5 @@
 {
-    "name": "lafan1_context_model_past_context",
+    "name": "lafan1_context_model_ending_transition",
     "workspace": "..\\experiments\\{name}",
     "datasets": {
         "train": {
@@ -10,7 +10,7 @@
                 "subject3",
                 "subject4"
             ],
-            "window": 41,
+            "window": 50,
             "offset": 1,
             "start_frame": 0
         },

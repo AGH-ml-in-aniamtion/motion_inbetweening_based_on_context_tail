@@ -6,6 +6,7 @@ import numpy as np
 
 import torch
 from torch.optim import Adam
+from torch.utils.data.distributed import DistributedSampler
 
 from motion_inbetween import benchmark
 from motion_inbetween.model import ContextTransformer
@@ -317,51 +318,51 @@ def train(config):
                 smooth_loss_avg = 0
                 loss_avg = 0
                 #info_idx += 1
+
+            if iteration % eval_interval == 0:
+                for trans in eval_trans:
+                    for i in range(len(val_data_loaders)):
+                        ds_name = val_dataset_names[i]
+                        ds_loader = val_data_loaders[i]
+
+                        if ds_name == "val":
+                            val_loss = validate_and_save_results(
+                                config, model, ds_loader, trans, 0, iteration, "no_past")
+                            validate_and_save_results(
+                                config, model, ds_loader, trans, trans//2, iteration, "equal_past")
+                            
+                if min_val_loss > val_loss:
+                    min_val_loss = val_loss
+                    # save min loss checkpoint
+                    train_utils.save_checkpoint(
+                        config, model, epoch, iteration,
+                        optimizer, scheduler, suffix=".min", n_ckp=3)
             iteration += 1
-            
-        
-        for trans in eval_trans:
-            for i in range(len(val_data_loaders)):
-                ds_name = val_dataset_names[i]
-                ds_loader = val_data_loaders[i]
-
-                if ds_name == "val":
-                    
-                    gpos_loss, gquat_loss, npss_loss = eval_on_dataset(
-                        config, ds_loader, model, trans)
-
-                    # After iterations, val_loss will be the
-                    # sum of losses on dataset named "val"
-                    # with transition length equals to last value
-                    # in eval_interval.
-                    val_loss = (gpos_loss + gquat_loss +
-                                npss_loss)
-                    
-                    stats_folder = config["workspace"]
-                    csv_filename = os.path.join(stats_folder, f"transition_{trans}.csv")
-                    file_exists = os.path.isfile(csv_filename)
-
-                    # Append results to the CSV file
-                    with open(csv_filename, mode="a", newline="") as file:
-                        writer = csv.writer(file)
-                        
-                        # Write header only if file is newly created
-                        if not file_exists:
-                            writer.writerow(["Epoch", "Metric", "Loss"])
-
-                        # Append results with metric names without the transition suffix
-                        writer.writerow([epoch, "gpos", gpos_loss])
-                        writer.writerow([epoch, "gquat", gquat_loss])
-                        writer.writerow([epoch, "npss", npss_loss])
-
-        if min_val_loss > val_loss:
-            min_val_loss = val_loss
-            # save min loss checkpoint
-            train_utils.save_checkpoint(
-                config, model, epoch, iteration,
-                optimizer, scheduler, suffix=".min", n_ckp=3)
-
         epoch += 1
+
+def validate_and_save_results(config, model, data_loader, trans_len, past_ctx, iteration, test_name):
+    gpos_loss, gquat_loss, npss_loss = eval_on_dataset(
+        config, data_loader, model, trans_len, past_context=past_ctx, post_process=True, debug=False, past_context_additive=False)
+    val_loss = (gpos_loss + gquat_loss + npss_loss)
+    
+    stats_folder = config["workspace"]
+    csv_filename = os.path.join(stats_folder, f"{test_name}_transition_{trans_len}.csv")
+    file_exists = os.path.isfile(csv_filename)
+
+    # Append results to the CSV file
+    with open(csv_filename, mode="a", newline="") as file:
+        writer = csv.writer(file)
+        
+        # Write header only if file is newly created
+        if not file_exists:
+            writer.writerow(["Iteration", "Metric", "Loss"])
+
+        # Append results with metric names without the transition suffix
+        writer.writerow([iteration, "gpos", gpos_loss])
+        writer.writerow([iteration, "gquat", gquat_loss])
+        writer.writerow([iteration, "npss", npss_loss])
+    return val_loss
+        
 
 
 def eval_on_dataset(config, data_loader, model, trans_len,
@@ -450,7 +451,6 @@ def eval_on_dataset(config, data_loader, model, trans_len,
         return gpos_loss.mean(), gquat_loss.mean(), npss_loss.sum(), loss_data
     else:
         return gpos_loss.mean(), gquat_loss.mean(), npss_loss.sum()
-
 
 def evaluate(model, positions, rotations, seq_slice, indices,
              mean, std, atten_mask, past_context, post_process=True, 
