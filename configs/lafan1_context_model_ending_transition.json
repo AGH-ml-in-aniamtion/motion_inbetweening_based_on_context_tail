@@ -60,7 +60,7 @@
     "train": {
         "checkpoint": "checkpoint_{name}.pth",
         "checkpoint_interval": 1000,
-        "total_epoch": 2000,
+        "total_epoch": 240,
         "batch_size": 32,
         "lr": 0.0625,
         "lr_warmup_iterations": 8000,
