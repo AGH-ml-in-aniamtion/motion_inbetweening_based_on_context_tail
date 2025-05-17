@@ -1,5 +1,5 @@
 {
-    "name": "lafan1_context_model_ending_transition",
+    "name": "lafan1_context_model_ending_transition_best_newest",
     "workspace": "..\\experiments\\{name}",
     "datasets": {
         "train": {
@@ -60,7 +60,7 @@
     "train": {
         "checkpoint": "checkpoint_{name}.pth",
         "checkpoint_interval": 1000,
-        "total_epoch": 240,
+        "total_epoch": 200,
         "batch_size": 32,
         "lr": 0.0625,
         "lr_warmup_iterations": 8000,

@@ -1,16 +1,21 @@
+import unittest
+import torch
 import os
 import sys
 import json
 import argparse
 import pandas as pd
-
+import torch
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 package_root = os.path.join(project_root, "packages")
 sys.path.append(package_root)
 
 
-import torch
+from motion_inbetween.model import transformer
+
+
+
 
 from motion_inbetween import benchmark, visualization
 from motion_inbetween.model import ContextTransformer
@@ -26,7 +31,7 @@ if __name__ == "__main__":
                                      "Post-processing is applied by default.")
     parser.add_argument("config", help="config name")
     parser.add_argument("-s", "--dataset",
-                        help="dataset name (default=benchmark)",
+                        help="dataset name (defaultwqq=benchmark)",
                         default="benchmark")
     parser.add_argument("-i", "--index", type=int, help="data index")
     parser.add_argument("-t", "--trans", type=int, default=30,
@@ -45,15 +50,14 @@ if __name__ == "__main__":
     results = []
     past_context = range(0,config["train"]["context_len"]-1)  #range(1, 11)
     transitions = [15,30,45]
-    context_total = config["train"]["context_len"]
     
     # i need to assume that every test has 10 frames of beginning context
     # and when applying mask then mask only correct ammount of frames for context
     # that will allow to have aligned prediction window for every test 
     
     for t in transitions:
-        for p in past_context:
-            config["train"]["past_context"] = p #????? train???
+        for i in past_context:
+            config["train"]["past_context"] = i #????? train???
             # initialize model
             model = ContextTransformer(config["model"]).to(device)
             # load checkpoint
@@ -65,11 +69,10 @@ if __name__ == "__main__":
                     data_loader,
                     model, 
                     trans_len=t, 
-                    beg_contex_len=context_total-p,
-                    past_context_len=p, 
+                    beg_contex_len=config["train"]["context_len"] - i, 
                     debug=args.debug,
-                    post_process=args.post_processing, 
-                    fixed_pred_window_start=context_total,
+                    post_process=args.post_processing,
+                    fixed_pred_window_start=config["train"]["context_len"],
                     save_results=True)
 
                 if args.debug:
@@ -83,13 +86,10 @@ if __name__ == "__main__":
                     gpos_loss, gquat_loss, npss_loss = res
 
                 print(config["name"])
-                print("trans {}: gpos: {:.4f}, gquat: {:.4f}, npss: {:.4f}{}".format(
-                    t, gpos_loss, gquat_loss, npss_loss,
+                print("b_ctx: {}, p_ctx: {},trans {}: gpos: {:.4f}, gquat: {:.4f}, npss: {:.4f}{}".format(
+                    config["train"]["context_len"] - i, i,t, gpos_loss, gquat_loss, npss_loss,
                     " (w/ post-processing)" if args.post_processing else ""))
-                results.append((t, p, gpos_loss, gquat_loss, npss_loss))
-                
-     
-                
+                results.append((t, i, gpos_loss, gquat_loss, npss_loss))
                 """else:
                 indices = config["indices"]
                 context_len = config["train"]["context_len"]
