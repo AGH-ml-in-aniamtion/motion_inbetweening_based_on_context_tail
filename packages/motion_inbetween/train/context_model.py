@@ -2,13 +2,14 @@ import os
 import csv
 import pickle
 import random
+from typing import Optional
 import numpy as np
 
 import torch
 from torch.optim import Adam
 from torch.utils.data.distributed import DistributedSampler
 
-from motion_inbetween import benchmark
+from motion_inbetween import benchmark, visualization
 from motion_inbetween.model import ContextTransformer
 from motion_inbetween.data import utils_torch as data_utils
 from motion_inbetween.train import rmi
@@ -90,12 +91,12 @@ def get_midway_targets(seq_slice, midway_targets_amount, midway_targets_p):
     return list(targets)
 
 
-def get_attention_mask(window_len, context_len, target_idx, device, past_context,
+def get_attention_mask(window_len, beg_context_len, target_idx, device, past_context,
                        midway_targets=()):
     atten_mask = torch.ones(window_len, window_len,
                             device=device, dtype=torch.bool)
     atten_mask[:, target_idx:target_idx+past_context+1] = False
-    atten_mask[:, :context_len] = False
+    atten_mask[:, :beg_context_len] = False
     atten_mask[:, midway_targets] = False
     atten_mask = atten_mask.unsqueeze(0)
 
@@ -342,7 +343,15 @@ def train(config):
 
 def validate_and_save_results(config, model, data_loader, trans_len, past_ctx, iteration, test_name):
     gpos_loss, gquat_loss, npss_loss = eval_on_dataset(
-        config, data_loader, model, trans_len, past_context=past_ctx, post_process=True, debug=False, past_context_additive=False)
+                                                config=config,
+                                                data_loader=data_loader,
+                                                model=model,
+                                                trans_len=trans_len,
+                                                beg_contex_len=config["train"]["context_len"] - past_ctx, 
+                                                past_context_len=past_ctx, 
+                                                post_process=True, 
+                                                debug=False
+                                        )
     val_loss = (gpos_loss + gquat_loss + npss_loss)
     
     stats_folder = config["workspace"]
@@ -363,33 +372,34 @@ def validate_and_save_results(config, model, data_loader, trans_len, past_ctx, i
         writer.writerow([iteration, "npss", npss_loss])
     return val_loss
         
-
-
-def eval_on_dataset(config, data_loader, model, trans_len,
-                    past_context=0, debug=False, post_process=True, past_context_additive=False):
+def eval_on_dataset(
+        config,
+        data_loader,
+        model,
+        trans_len, # length of unknown transition to predict
+        beg_contex_len=0, #length of context preceeding prediction
+        past_context_len=0, #length of context after prediction
+        debug=False,
+        post_process=True,
+        #fixed_pred_window_start : Optional[int] = None, # fixed start of prediction window (None for default behavior),
+        save_results=False, #save results to file
+        ):
+    
     device = data_loader.dataset.device
     dtype = data_loader.dataset.dtype
 
     indices = config["indices"]
-    context_len = config["train"]["context_len"]
-    target_idx = context_len + trans_len
+    target_idx = beg_contex_len + trans_len
 
-    if past_context_additive:
-        beg_context = context_len
-    else:
-        beg_context = context_len - past_context
-    
-    seq_slice = slice(context_len, target_idx)
-    window_len = beg_context + trans_len + past_context + 2
-    
-
+    seq_slice = slice(beg_contex_len, target_idx)
+    window_len = beg_contex_len + trans_len + past_context_len + 2
     mean, std = get_train_stats_torch(config, dtype, device)
     mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
         config, dtype, device)
 
     # attention mask
     atten_mask = get_attention_mask(
-        window_len, beg_context, target_idx, device, past_context)
+        window_len, beg_contex_len, target_idx, device, past_context_len) 
 
     data_indexes = []
     gpos_loss = []
@@ -409,24 +419,48 @@ def eval_on_dataset(config, data_loader, model, trans_len,
         foot_contact = foot_contact[..., :window_len, :]
 
         positions, rotations = data_utils.to_start_centered_data(
-            positions, rotations, beg_context)
+            positions, rotations, beg_contex_len) 
 
         pos_new, rot_new = evaluate(
             model, positions, rotations, seq_slice,
-            indices, mean, std, atten_mask, past_context, post_process)
+            indices, mean, std, atten_mask, past_context_len, post_process) 
+
+
 
         (gpos_batch_loss, gquat_batch_loss,
-         npss_batch_loss, npss_batch_weights) = \
+        npss_batch_loss, npss_batch_weights) = \
             benchmark.get_rmi_style_batch_loss(
                 positions, rotations, pos_new, rot_new, parents,
-                context_len, target_idx, mean_rmi, std_rmi
-        )
+                beg_contex_len, target_idx, mean_rmi, std_rmi
+        ) 
 
         gpos_loss.append(gpos_batch_loss)
         gquat_loss.append(gquat_batch_loss)
         npss_loss.append(npss_batch_loss)
         npss_weights.append(npss_batch_weights)
         data_indexes.extend(data_idx.tolist())
+        
+        
+        #if not exist make dir 
+        if save_results:
+            dirname = "./beg{}_past{}_fixed{}".format(
+                beg_contex_len, past_context_len, 0)
+            #dirname = os.path.join(config["workspace"], dirname)
+            
+            if os.path.exists(dirname) is False:
+                os.makedirs(dirname)
+                
+            json_path_gt = "output_{}_gt.json".format(i)
+            json_path_gt = os.path.join(dirname, json_path_gt)
+            visualization.save_data_to_json(
+                json_path_gt, positions[0], rotations[0],
+                foot_contact, parents)
+
+            json_path = "output_{}.json".format(i)
+            json_path = os.path.join(dirname, json_path)
+            visualization.save_data_to_json(
+                json_path, pos_new[0], rot_new[0],
+                foot_contact, parents)
 
     gpos_loss = np.concatenate(gpos_loss, axis=0)
     gquat_loss = np.concatenate(gquat_loss, axis=0)

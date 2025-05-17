@@ -147,3 +147,5 @@ cython_debug/
 *.out
 *.pkl
 
+*.csv
+tests/**/*.json
