@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=keyframe_transition
-#SBATCH --time=05:00:00
+#SBATCH --time=45:00:00
 #SBATCH --partition=plgrid-gpu-v100
 #SBATCH --mem=40G
 #SBATCH --gres=gpu:1  # Explicitly request 1 GPU
