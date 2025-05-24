@@ -149,3 +149,4 @@ cython_debug/
 
 *.csv
 tests/**/*.json
+experiments/lafan1_context_model_ending_transition/lafan1_context_model_ending_transition.json
