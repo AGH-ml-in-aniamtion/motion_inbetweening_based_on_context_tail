@@ -408,6 +408,8 @@ def eval_on_dataset(
     npss_weights = []
 
     for i, data in enumerate(data_loader, 0):
+        if i != 50:
+            continue
         (positions, rotations, global_positions, global_rotations,
             foot_contact, parents, data_idx) = data
         parents = parents[0]
@@ -425,8 +427,6 @@ def eval_on_dataset(
             model, positions, rotations, seq_slice,
             indices, mean, std, atten_mask, past_context_len, post_process) 
 
-
-
         (gpos_batch_loss, gquat_batch_loss,
         npss_batch_loss, npss_batch_weights) = \
             benchmark.get_rmi_style_batch_loss(
@@ -443,24 +443,25 @@ def eval_on_dataset(
         
         #if not exist make dir 
         if save_results:
-            dirname = "./beg{}_past{}_fixed{}".format(
-                beg_contex_len, past_context_len, 0)
-            #dirname = os.path.join(config["workspace"], dirname)
-            
-            if os.path.exists(dirname) is False:
-                os.makedirs(dirname)
+            for b in range(len(positions)):
+                dirname = "./{}/beg{}_past{}_fixed{}".format(
+                    config["name"], beg_contex_len, past_context_len, 0)
+                #dirname = os.path.join(config["workspace"], dirname)
                 
-            json_path_gt = "output_{}_gt.json".format(i)
-            json_path_gt = os.path.join(dirname, json_path_gt)
-            visualization.save_data_to_json(
-                json_path_gt, positions[0], rotations[0],
-                foot_contact, parents)
+                if os.path.exists(dirname) is False:
+                    os.makedirs(dirname)
+                    
+                json_path_gt = "output_{}_batchn{}_iter{}_gt.json".format(i, i, b)
+                json_path_gt = os.path.join(dirname, json_path_gt)
+                visualization.save_data_to_json(
+                    json_path_gt, positions[b], rotations[b],
+                    foot_contact[b], parents)
 
-            json_path = "output_{}.json".format(i)
-            json_path = os.path.join(dirname, json_path)
-            visualization.save_data_to_json(
-                json_path, pos_new[0], rot_new[0],
-                foot_contact, parents)
+                json_path = "output_{}_batchn{}_iter{}.json".format(i, i, b)
+                json_path = os.path.join(dirname, json_path)
+                visualization.save_data_to_json(
+                    json_path, pos_new[b], rot_new[b],
+                    foot_contact[b], parents)
 
     gpos_loss = np.concatenate(gpos_loss, axis=0)
     gquat_loss = np.concatenate(gquat_loss, axis=0)

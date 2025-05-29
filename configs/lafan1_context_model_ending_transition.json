@@ -1,5 +1,5 @@
 {
-    "name": "lafan1_context_model_ending_transition_best_newest",
+    "name": "lafan1_context_model_ending_transition",
     "workspace": "..\\experiments\\{name}",
     "datasets": {
         "train": {
