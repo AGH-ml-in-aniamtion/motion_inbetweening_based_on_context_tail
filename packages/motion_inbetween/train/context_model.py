@@ -91,26 +91,23 @@ def get_midway_targets(seq_slice, midway_targets_amount, midway_targets_p):
     return list(targets)
 
 
-def get_attention_mask(window_len, beg_context_len, target_idx, device, past_context,
-                       midway_targets=()):
-    atten_mask = torch.ones(window_len, window_len,
+def get_attention_mask(window_len, interpolation_window_slice , device, midway_targets=()):
+    
+    atten_mask = torch.zeros(window_len, window_len,
                             device=device, dtype=torch.bool)
-    atten_mask[:, target_idx:target_idx+past_context+1] = False
-    atten_mask[:, :beg_context_len] = False
+    atten_mask[:, interpolation_window_slice] = True
     atten_mask[:, midway_targets] = False
     atten_mask = atten_mask.unsqueeze(0)
-
     # (1, seq, seq)
     return atten_mask
 
 
-def get_data_mask(window_len, d_mask, constrained_slices,
-                  context_len, target_idx, device, dtype, past_context,
+def get_data_mask(window_len, d_mask, constrained_slices, device, dtype, beg_context_slice, past_context_slice,
                   midway_targets=()):
     # 0 for unknown and 1 for known
     data_mask = torch.zeros((window_len, d_mask), device=device, dtype=dtype)
-    data_mask[:context_len, :] = 1
-    data_mask[target_idx:target_idx+past_context+1, :] = 1
+    data_mask[beg_context_slice, :] = 1
+    data_mask[past_context_slice, :] = 1
 
     for s in constrained_slices:
         data_mask[midway_targets, s] = 1
@@ -159,6 +156,8 @@ def set_placeholder_root_pos(x, seq_slice, midway_targets, p_slice):
     return x
 
 def train(config):
+    raise NotImplementedError("Todo reimplement context variables")
+    
     indices = config["indices"] 
     info_interval = config["visdom"]["interval"]
     eval_interval = config["visdom"]["interval_eval"]
@@ -217,19 +216,23 @@ def train(config):
             parents = parents[0]
             
             # randomize past context length
-            past_context = random.randint(0, context_len-1)
+            past_context = random.randint(1, context_len-1)
             beg_context = context_len - past_context
-
-
-            positions, rotations = data_utils.to_start_centered_data( 
-                positions, rotations, beg_context) #data is centered to end of context. must be beg ctx instead of whole
-            global_rotations, global_positions = data_utils.fk_torch(
-                rotations, positions, parents)
-
+            
             # randomize transition length
             trans_len = random.randint(min_trans, max_trans)
             target_idx = beg_context + trans_len
             seq_slice = slice(beg_context, target_idx)
+
+            interpolation_window_slice = slice(beg_context, target_idx)
+            beg_context_slice = slice(0, beg_context)
+            past_context_slice = slice(target_idx, target_idx + past_context)
+
+            positions, rotations = data_utils.to_start_centered_data(
+                positions, rotations, interpolation_window_slice.start) #data is centered to end of context. must be beg ctx instead of whole
+            global_rotations, global_positions = data_utils.fk_torch(
+                rotations, positions, parents)
+
             
             # get random midway target frames
             midway_targets = get_midway_targets(
@@ -237,10 +240,13 @@ def train(config):
 
             # attention mask
             atten_mask = get_attention_mask(
-                window_len, beg_context, target_idx, device, past_context,
+                window_len=window_len,
+                interpolation_window_slice=interpolation_window_slice,
+                device=device,
                 midway_targets=midway_targets)
 
             # data mask
+            raise NotImplementedError("get_data_mask has to be changed for training")
             data_mask = get_data_mask(
                 window_len, model.d_mask, model.constrained_slices,
                 beg_context, target_idx, device, dtype,past_context=past_context, midway_targets=midway_targets)
@@ -384,20 +390,25 @@ def eval_on_dataset(
         #fixed_pred_window_start : Optional[int] = None, # fixed start of prediction window (None for default behavior),
         save_results=False, #save results to file
         ):
-    
     device = data_loader.dataset.device
     dtype = data_loader.dataset.dtype
 
     indices = config["indices"]
     target_idx = beg_contex_len + trans_len
 
+
+    beg_context_slice = slice(0, beg_contex_len)
+    past_context_slice = slice(target_idx, target_idx + past_context_len)
+    
     seq_slice = slice(beg_contex_len, target_idx)
     window_len = beg_contex_len + trans_len + past_context_len + 2
     mean, std = get_train_stats_torch(config, dtype, device)
     mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
         config, dtype, device)
 
+
     # attention mask
+    raise NotImplementedError("Attention mask change arguments")
     atten_mask = get_attention_mask(
         window_len, beg_contex_len, target_idx, device, past_context_len) 
 
@@ -408,8 +419,6 @@ def eval_on_dataset(
     npss_weights = []
 
     for i, data in enumerate(data_loader, 0):
-        if i != 50:
-            continue
         (positions, rotations, global_positions, global_rotations,
             foot_contact, parents, data_idx) = data
         parents = parents[0]
@@ -421,11 +430,20 @@ def eval_on_dataset(
         foot_contact = foot_contact[..., :window_len, :]
 
         positions, rotations = data_utils.to_start_centered_data(
-            positions, rotations, beg_contex_len) 
+            positions, rotations, seq_slice.start) 
 
         pos_new, rot_new = evaluate(
-            model, positions, rotations, seq_slice,
-            indices, mean, std, atten_mask, past_context_len, post_process) 
+            model=model, 
+            positions=positions, 
+            rotations=rotations, 
+            seq_slice=seq_slice,
+            indices=indices, 
+            mean=mean, 
+            std=std, 
+            atten_mask=atten_mask, 
+            beg_context_slice=beg_context_slice, 
+            past_context_slice=past_context_slice, 
+            post_process=post_process) 
 
         (gpos_batch_loss, gquat_batch_loss,
         npss_batch_loss, npss_batch_weights) = \
@@ -439,7 +457,6 @@ def eval_on_dataset(
         npss_loss.append(npss_batch_loss)
         npss_weights.append(npss_batch_weights)
         data_indexes.extend(data_idx.tolist())
-        
         
         #if not exist make dir 
         if save_results:
@@ -488,7 +505,7 @@ def eval_on_dataset(
         return gpos_loss.mean(), gquat_loss.mean(), npss_loss.sum()
 
 def evaluate(model, positions, rotations, seq_slice, indices,
-             mean, std, atten_mask, past_context, post_process=True, 
+             mean, std, atten_mask, beg_context_slice, past_context_slice, post_process=True,
              midway_targets=()):
     """
     Generate transition animation.
@@ -535,8 +552,6 @@ def evaluate(model, positions, rotations, seq_slice, indices,
     dtype = positions.dtype
     device = positions.device
     window_len = positions.shape[-3]
-    beg_context = seq_slice.start
-    target_idx = seq_slice.stop
     
     # If current context model is not trained with constrants,
     # ignore midway_targets.
@@ -564,8 +579,14 @@ def evaluate(model, positions, rotations, seq_slice, indices,
 
         # data mask (seq, 1)
         data_mask = get_data_mask(
-            window_len, model.d_mask, model.constrained_slices, beg_context,
-            target_idx, device, dtype, past_context, midway_targets=midway_targets)
+            window_len=window_len, 
+            d_mask=model.d_mask, 
+            constrained_slices=model.constrained_slices, 
+            device=device, 
+            dtype=dtype,
+            beg_context_slice=beg_context_slice, 
+            past_context_slice=past_context_slice,
+            midway_targets=midway_targets)
 
         keyframe_pos_idx = get_keyframe_pos_indices(
             window_len, seq_slice, dtype, device)

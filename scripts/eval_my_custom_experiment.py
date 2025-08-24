@@ -41,6 +41,8 @@ if __name__ == "__main__":
 
     config = load_config_by_name(args.config)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    indices = config["indices"]
+    
     dataset, data_loader, sequence_filenames = train_utils.init_bvh_dataset_w_file_info(
         config, args.dataset, device=device)
 
@@ -52,8 +54,9 @@ if __name__ == "__main__":
     debug = args.debug
     post_process = args.post_processing
     save_results = False
-
+    
     context_len = config["train"]["context_len"] # 10
+    interpolation_window_offset = context_len
     past_contexts = range(0,10)  
     transitions = [15,30,45]
 
@@ -64,24 +67,29 @@ if __name__ == "__main__":
             config["train"]["past_context"] = past_context_len #0
             beg_context_len = context_len - past_context_len # 10
             
-            indices = config["indices"]
-            target_idx = beg_context_len + trans_len #  25
-            interpolation_window_slice = slice(beg_context_len, target_idx)  # 10:25
-            processing_window_len = target_idx + past_context_len + 2 # 27
+            target_idx = interpolation_window_offset + trans_len #  25
+            interpolation_window_slice = slice(interpolation_window_offset, target_idx)  # 10:25
+            processing_window_len = interpolation_window_offset + trans_len + interpolation_window_offset
 
+            beg_context_slice = slice(interpolation_window_offset-beg_context_len, interpolation_window_offset)
+            past_context_slice = slice(target_idx, target_idx+past_context_len)
+ 
             mean, std = context_model.get_train_stats_torch(config, dtype, device)
             mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
                 config, dtype, device)
 
             atten_mask = context_model.get_attention_mask(
-                processing_window_len, beg_context_len, target_idx, device, past_context_len)
-  
+                window_len=processing_window_len,
+                interpolation_window_slice=interpolation_window_slice,
+                device=device)
+
             data_indexes = []
             gpos_loss = []
             gquat_loss = []
             npss_loss = []
             npss_weights = []
             animations = []
+            
             for i, data in enumerate(data_loader):
                 (positions, rotations, global_positions, global_rotations,
                     foot_contact, parents, data_idx) = data
@@ -93,7 +101,7 @@ if __name__ == "__main__":
                 foot_contact = foot_contact[..., :processing_window_len, :]
 
                 positions, rotations = data_utils.to_start_centered_data(
-                    positions, rotations, beg_context_len)
+                    positions, rotations, interpolation_window_offset)
 
                 pos_new, rot_new = context_model.evaluate(
                     model, positions, rotations, interpolation_window_slice,
