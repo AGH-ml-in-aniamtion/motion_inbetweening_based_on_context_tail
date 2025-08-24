@@ -89,6 +89,13 @@ class BvhDataSet(Dataset):
         for frame in self.frames:
             count += int(float(frame - self.window) / self.offset) + 1
         return count
+    
+    def get_sequence_filenames(self):
+        out = []
+        for i, frame in enumerate(self.frames):
+            count = int(float(frame - self.window) / self.offset) + 1
+            out.extend([os.path.basename(self.bvh_files[i]) for _ in range(count)])
+        return out
 
     def __getitem__(self, idx):
         curr_idx = idx

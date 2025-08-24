@@ -91,6 +91,27 @@ def init_bvh_dataset(config, dataset_name, device,
     return dataset, data_loader
 
 
+def init_bvh_dataset_w_file_info(config, dataset_name, device, dtype=torch.float32):   
+    """ Extended version of init_bvh_dataset that also returns which animation comes from which file.
+
+    :param config: _description_
+    :type config: _type_
+    :param dataset_name: _description_
+    :type dataset_name: _type_
+    :param device: _description_
+    :type device: _type_
+    :param dtype: _description_, defaults to torch.float32
+    :type dtype: _type_, optional
+    :return: _description_
+    :rtype: _type_
+    """
+    dataset = loader.BvhDataSet(**config["datasets"][dataset_name],
+                                device=device, dtype=dtype)
+    print("{} clips in dataset.".format(len(dataset)))
+    data_loader = DataLoader(dataset, batch_size=config["train"]["batch_size"])
+    return dataset, data_loader, dataset.get_sequence_filenames()
+
+
 def get_val_datasets(config, device,
                      exclude=("train", "train_stats",
                               "bench_stats", "benchmark"),

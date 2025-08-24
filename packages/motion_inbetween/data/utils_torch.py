@@ -424,6 +424,7 @@ def to_mean_centered_data(positions, rotations, context_len,
     Args:
         positions (tensor): (..., seq, joint, 3), raw position data
         rotations (tensor): (..., seq, joint, 3, 3), raw rotation data
+        context_len (int): length of context frames. Minimum 1. takes last context frme as pivot
         forward_axis (str, optional): "x" or "z". Defaults to "x".
         root_idx (int, optional): root joint index. Defaults to 0.
         return_offset (bool): If True, return root position and rotation

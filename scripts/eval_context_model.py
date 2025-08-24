@@ -69,7 +69,6 @@ if __name__ == "__main__":
                     past_context_len=p, 
                     debug=args.debug,
                     post_process=args.post_processing, 
-                    fixed_pred_window_start=context_total,
                     save_results=True)
 
                 if args.debug:
@@ -87,8 +86,6 @@ if __name__ == "__main__":
                     t, gpos_loss, gquat_loss, npss_loss,
                     " (w/ post-processing)" if args.post_processing else ""))
                 results.append((t, p, gpos_loss, gquat_loss, npss_loss))
-                
-     
                 
                 """else:
                 indices = config["indices"]
