@@ -370,17 +370,17 @@ def quat_slerp_torch(x, y, t):
     return res
 
 
-def to_start_centered_data(positions, rotations, context_len,
+def to_start_centered_data(positions, rotations, start_of_interpolation,
                            forward_axis="x", root_idx=0, return_offset=False):
     """
-    Center raw data at the start of transition.
+    Center raw data at the last frame of context, just before start of interpolation.
     Last context frame is moved to origin (only x and z axis, y unchanged)
     and facing forward_axis.
 
     Args:
         positions (tensor): (..., seq, joint, 3), raw position data
         rotations (tensor): (..., seq, joint, 3, 3), raw rotation data
-        context_len (int): length of context frames
+        start_of_interpolation (int): start frame of interpolation
         forward_axis (str, optional): "x" or "z". Defaults to "x".
         root_idx (int, optional): root joint index. Defaults to 0.
         return_offset (bool): If True, return root position and rotation
@@ -394,7 +394,7 @@ def to_start_centered_data(positions, rotations, context_len,
     """
     pos = positions.clone().detach()
     rot = rotations.clone().detach()
-    frame = context_len - 1
+    frame = start_of_interpolation - 1
 
     with torch.no_grad():
         # root position on xz axis at last context frame as position offset
