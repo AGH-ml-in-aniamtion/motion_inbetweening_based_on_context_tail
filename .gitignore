@@ -149,3 +149,5 @@ cython_debug/
 
 *.csv
 tests/**/*.json
+scripts/**/*.json
+*.7z
