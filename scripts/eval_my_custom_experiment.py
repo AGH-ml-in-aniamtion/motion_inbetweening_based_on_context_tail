@@ -45,9 +45,12 @@ if __name__ == "__main__":
     
     dataset, data_loader, sequence_filenames = train_utils.init_bvh_dataset_w_file_info(
         config, args.dataset, device=device)
+    dtype = data_loader.dataset.dtype
+    mean, std = context_model.get_train_stats_torch(config, dtype, device)
+    mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
+        config, dtype, device)
 
     results = []
-    dtype = data_loader.dataset.dtype
     model = ContextTransformer(config["model"]).to(device)
     epoch, iteration = train_utils.load_checkpoint(config, model)
     
@@ -57,9 +60,10 @@ if __name__ == "__main__":
     
     context_len = config["train"]["context_len"] # 10
     interpolation_window_offset = context_len
-    past_contexts = range(0,10)  
+    past_contexts = range(0,10) #
     transitions = [15,30,45]
-
+    
+    
     #i can get per animation result if i compare indexes of dataset with appended batched results
     for trans_len in transitions:
         for past_context_len in past_contexts:
@@ -73,10 +77,8 @@ if __name__ == "__main__":
 
             beg_context_slice = slice(interpolation_window_offset-beg_context_len, interpolation_window_offset)
             past_context_slice = slice(target_idx, target_idx+past_context_len)
- 
-            mean, std = context_model.get_train_stats_torch(config, dtype, device)
-            mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
-                config, dtype, device)
+
+            #TODO: use slice!!!
 
             atten_mask = context_model.get_attention_mask(
                 window_len=processing_window_len,
@@ -91,13 +93,11 @@ if __name__ == "__main__":
             animations = []
             
             for i, data in enumerate(data_loader):
-                (positions, rotations, global_positions, global_rotations,
+                (positions, rotations, _, _,
                     foot_contact, parents, data_idx) = data
                 parents = parents[0] 
-                positions = positions[..., :processing_window_len, :, :]
+                positions = positions[..., :processing_window_len, :, :] #[batch, window, :,:]
                 rotations = rotations[..., :processing_window_len, :, :, :]
-                global_positions = global_positions[..., :processing_window_len, :, :]
-                global_rotations = global_rotations[..., :processing_window_len, :, :, :]
                 foot_contact = foot_contact[..., :processing_window_len, :]
 
                 positions, rotations = data_utils.to_start_centered_data(
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
                 pos_new, rot_new = context_model.evaluate(
                     model, positions, rotations, interpolation_window_slice,
-                    indices, mean, std, atten_mask, past_context_len, post_process) 
+                    indices, mean, std, atten_mask, past_context_len, post_process)  #[32, 35, 22, 3]), torch.Size([32, 35, 22, 3, 3]) 
                 
                 (gpos_batch_loss, gquat_batch_loss,
                 npss_batch_loss, npss_batch_weights) = \
@@ -114,7 +114,6 @@ if __name__ == "__main__":
                         beg_context_len, target_idx, mean_rmi, std_rmi
                     )
 
-                 
                 gpos_loss.append(gpos_batch_loss)
                 gquat_loss.append(gquat_batch_loss)
                 npss_loss.append(npss_batch_loss)
@@ -143,16 +142,17 @@ if __name__ == "__main__":
 
             gpos_loss = np.concatenate(gpos_loss, axis=0) 
             gquat_loss = np.concatenate(gquat_loss, axis=0)
-            
-           # npss_loss = np.concatenate(npss_loss, axis=0)           # (batch, dim)
-           # npss_weights = np.concatenate(npss_weights, axis=0)
-           # npss_weights = npss_weights / np.sum(npss_weights)      # (batch, dim)
-           # npss_loss = np.sum(npss_loss * npss_weights, axis=-1)   # (batch, )
+            npss_loss = np.concatenate(npss_loss, axis=0)           # (batch, dim)
+            npss_weights = np.concatenate(npss_weights, axis=0)
+
+            #print(gpos_loss.shape, gquat_loss.shape, npss_loss.shape, npss_weights.shape, len(data_indexes))
+            # npss_weights = npss_weights / np.sum(npss_weights)      # (batch, dim)
+            # npss_loss = np.sum(npss_loss * npss_weights, axis=-1)   # (batch, )
 
             for i, data_idx in enumerate(data_indexes):
                 results.append((trans_len, past_context_len, gpos_loss[i], gquat_loss[i], npss_loss[i], npss_weights[i], data_idx , sequence_filenames[data_idx]))
     results = pd.DataFrame(results)
     results.columns = ["trans", "past_context", "gpos", "gquat", "npss", "npss_weights", "data_index", "sequence_filename"]
     print(results.head())
-    results.to_pickle("results2.pickle")
+    results.to_pickle("results3.pickle")
     
