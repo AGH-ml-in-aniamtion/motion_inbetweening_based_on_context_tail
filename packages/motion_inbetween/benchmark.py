@@ -89,6 +89,13 @@ def get_npss_loss_batch(gt_data, pred_data, eps=1e-8):
     return emd, gt_total_power
 
 
+def get_rmi_style_batch_loss_slice(positions, rotations, pos_new, rot_new,
+                             parents, interpolation_window_slice : slice,
+                             mean_rmi, std_rmi):
+    return get_rmi_style_batch_loss(positions, rotations, pos_new, rot_new,
+                                      parents, interpolation_window_slice.start, interpolation_window_slice.stop, mean_rmi, std_rmi)
+
+
 def get_rmi_style_batch_loss(positions, rotations, pos_new, rot_new,
                              parents, beg_context, target_idx,
                              mean_rmi, std_rmi):

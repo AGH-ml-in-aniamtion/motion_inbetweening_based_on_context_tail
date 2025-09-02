@@ -104,14 +104,24 @@ if __name__ == "__main__":
                     positions, rotations, interpolation_window_offset)
 
                 pos_new, rot_new = context_model.evaluate(
-                    model, positions, rotations, interpolation_window_slice,
-                    indices, mean, std, atten_mask, past_context_len, post_process)  #[32, 35, 22, 3]), torch.Size([32, 35, 22, 3, 3]) 
-                
+                    model=model,
+                    positions=positions,
+                    rotations=rotations,
+                    seq_slice=interpolation_window_slice,
+                    indices=indices,
+                    mean=mean,
+                    std=std,
+                    atten_mask=atten_mask,
+                    beg_context_slice=beg_context_slice,
+                    past_context_slice=past_context_slice,
+                    #past_context_len=past_context_len,
+                    post_process=post_process)  #[32, 35, 22, 3]), torch.Size([32, 35, 22, 3, 3]) 
+
                 (gpos_batch_loss, gquat_batch_loss,
                 npss_batch_loss, npss_batch_weights) = \
-                    benchmark.get_rmi_style_batch_loss(
-                        positions, rotations, pos_new, rot_new, parents,
-                        beg_context_len, target_idx, mean_rmi, std_rmi
+                    benchmark.get_rmi_style_batch_loss_slice(
+                        positions=positions, rotations=rotations, pos_new=pos_new, rot_new=rot_new, parents=parents,
+                        interpolation_window_slice=interpolation_window_slice, mean_rmi=mean_rmi, std_rmi=std_rmi
                     )
 
                 gpos_loss.append(gpos_batch_loss)
