@@ -553,6 +553,10 @@ def evaluate(model, positions, rotations, seq_slice, indices,
     device = positions.device
     window_len = positions.shape[-3]
     
+    assert beg_context_slice.stop > beg_context_slice.start, "beginning context length must be greater than 0, it includes target"
+    assert past_context_slice.stop > past_context_slice.start, "past context length must be greater than 0, it includes target"
+    assert seq_slice.stop > seq_slice.start, "transition length must be greater than 0"
+    
     # If current context model is not trained with constrants,
     # ignore midway_targets.
     if midway_targets and not model.constrained_slices:
@@ -576,6 +580,7 @@ def evaluate(model, positions, rotations, seq_slice, indices,
 
         # zscore
         x_zscore = (x_orig - mean) / std
+        # print("x_zscore abs mean:", x_zscore[..., seq_slice, :].abs().mean())
 
         # data mask (seq, 1)
         data_mask = get_data_mask(
@@ -595,6 +600,11 @@ def evaluate(model, positions, rotations, seq_slice, indices,
             x_zscore * data_mask,
             data_mask.expand(*x_zscore.shape[:-1], data_mask.shape[-1])
         ], dim=-1)
+        # print("x_zscore * data_mask[seq_slice].sum()",(x_zscore * data_mask)[:, seq_slice, :].sum())
+        # print("x abs mean:", x.abs().sum())
+        # print("x shape:", x.shape)
+        # #print("data_mask", data_mask)
+        # print("interpolation_window_slice", seq_slice)
 
         p_slice = slice(indices["p_start_idx"], indices["p_end_idx"])
         x = set_placeholder_root_pos(x, seq_slice, midway_targets, p_slice)

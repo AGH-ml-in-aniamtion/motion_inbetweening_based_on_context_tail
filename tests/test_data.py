@@ -37,7 +37,15 @@ class TestBvh(unittest.TestCase):
         self.assertAlmostEqual(
             np.sum(np.abs(anim1.positions[start_frame:] - anim2.positions)),
             0)
-
+        
+    def test_bvh_coherence(self):
+        for f in os.listdir(os.path.join(DATASET_ROOT, "lafan1")):
+            if f.endswith(".bvh") is False:
+                continue
+            path = os.path.join(DATASET_ROOT, "lafan1", f)
+            anim1 = bvh.load_bvh(path)
+            for i in range(1,22):
+                self.assertEqual((anim1.positions[:,i,:] - anim1.positions[0,i,:]).sum(), 0, msg="All positions except root joint should be equal")
 
 class TestDataUtilsNumpy(unittest.TestCase):
     def test_6D_9D_rotation_conversion(self):

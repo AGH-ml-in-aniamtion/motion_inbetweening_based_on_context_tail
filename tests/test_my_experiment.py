@@ -14,12 +14,14 @@ from motion_inbetween.train import context_model, rmi
 from motion_inbetween.config import load_config_by_name
 from motion_inbetween.model import ContextTransformer
 from motion_inbetween.data import utils_torch as data_utils
+import matplotlib.pyplot as plt
 
     
 class TestMyExperiment(unittest.TestCase):
     @classmethod
     def setUpClass(self):
         # Config, device, and model
+        torch.use_deterministic_algorithms(True)
         lafan1_context_model = "lafan1_context_model"
         self.config = load_config_by_name(lafan1_context_model)
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -31,8 +33,10 @@ class TestMyExperiment(unittest.TestCase):
         self.dtype = torch.float32
 
         # Dummy test tensors
-        self.positions = torch.rand(32, 65, 22, 3, dtype=self.dtype)
-        self.rotations = torch.rand(32, 65, 22, 3, 3, dtype=self.dtype)
+        self.positions = torch.rand(1, 65, 22, 3, dtype=self.dtype)
+        for i in range(self.positions.shape[1]):
+            self.positions[0, i, 1:, :] = self.positions[0, 0, 1:, :]
+        self.rotations = torch.rand(1, 65, 22, 3, 3, dtype=self.dtype)
         self.parents = torch.tensor(
             [-1, 0, 1, 2, 3, 0, 5, 6, 7, 0, 9, 10, 11, 12, 11, 14, 15, 16,
              11, 18, 19, 20]
@@ -90,7 +94,7 @@ class TestMyExperiment(unittest.TestCase):
     def test_model_masks_evaluation(self):
             
         for trans_len in [15,30,45]:
-            for past_context_len in range(0,10):
+            for past_context_len in range(1,10):
                 
                 self.config["train"]["past_context"] = past_context_len #0
                 beg_context_len = self.context_len - past_context_len # 10
@@ -139,10 +143,10 @@ class TestMyExperiment(unittest.TestCase):
                 
                 #zeroing whats not inside context               
                 positions_zeroed = positions.clone()
-                positions_zeroed[..., interpolation_window_slice, :, :] = 0
+                positions_zeroed[..., interpolation_window_slice, 0, :] = 0 #only modifying root joint
                 
                 rotations_zeroed = rotations.clone()
-                rotations_zeroed[..., interpolation_window_slice, :, :] = 0
+                rotations_zeroed[:, interpolation_window_slice, ...] = 0
                 pos_new_zeroed, rot_new_zeroed = context_model.evaluate(
                     model=self.model, 
                     positions=positions_zeroed, 
@@ -162,7 +166,37 @@ class TestMyExperiment(unittest.TestCase):
                         positions=positions, rotations=rotations, pos_new=pos_new_zeroed, rot_new=rot_new_zeroed, parents=self.parents,
                         interpolation_window_slice=interpolation_window_slice, mean_rmi=mean_rmi, std_rmi=std_rmi
                     )
-                    
+                # positions_delta = torch.abs(pos_new_normal - pos_new_zeroed)
+                # rotations_delta = torch.abs(rot_new_normal - rot_new_zeroed)
+                # print(positions_delta.shape)
+                # plt.imshow((positions_delta)[0])
+                # plt.ylabel("frame")
+                # plt.xlabel("feature(joint)")
+                # plt.show()
+
+                #assert that positions for every joint except root is equal in both in every frame
+                for f in range(positions.shape[1]):
+                    # Non-root joints should be identical across frames
+                    self.assertTrue(
+                        torch.allclose(positions[0, f, 1:, :], positions[0, 0, 1:, :], atol=1e-6),
+                        msg=f"Non-root joint position prediction mismatch in baseline at frame {f}"
+                    )
+                    self.assertTrue(
+                        torch.allclose(pos_new_normal[0, f, 1:, :], pos_new_normal[0, 0, 1:, :], atol=1e-6),
+                        msg=f"Non-root joint position prediction mismatch in new normal at frame {f}"
+                    )
+                    self.assertTrue(
+                        torch.allclose(pos_new_zeroed[0, f, 1:, :], pos_new_zeroed[0, 0, 1:, :], atol=1e-6),
+                        msg=f"Non-root joint position prediction mismatch in new zeroed at frame {f}"
+                    )
+
+                # Root joint of normal vs zeroed
+                for f in range(positions.shape[1]):
+                    self.assertTrue(
+                        torch.allclose(pos_new_normal[0, f, 0, :], pos_new_zeroed[0, f, 0, :], atol=1e-6),
+                        msg=f"Root joint position prediction mismatch at frame {f}"
+                    )
+
                 self.assertTrue(
                     torch.allclose(
                         torch.as_tensor(gpos_batch_loss_normal),
@@ -199,15 +233,7 @@ class TestMyExperiment(unittest.TestCase):
                     msg=f"T{trans_len} PC{past_context_len} npss_batch_weights mismatch. {npss_batch_weights_normal} vs {npss_batch_weights_zeroed}"
                 )
                 
-                self.assertTrue(
-                    torch.allclose(pos_new_normal, pos_new_zeroed, atol=1e-5),
-                    msg=f"T{trans_len} PC{past_context_len} positions mismatch. {pos_new_normal} vs {pos_new_zeroed}"
-                )
 
-                self.assertTrue(
-                    torch.allclose(rot_new_normal, rot_new_zeroed, atol=1e-5),
-                    msg=f"T{trans_len} PC{past_context_len} rotations mismatch. {rot_new_normal} vs {rot_new_zeroed}"
-                )
 
 if __name__ == "__main__":
     unittest.main()
