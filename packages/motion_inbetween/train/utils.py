@@ -207,6 +207,9 @@ def cal_f_loss(gpos_out, c_out, seq_slice):
 
 
 def get_new_positions(positions, y, indices, seq_slice=slice(None, None)):
+    """Copying only root joint position from interpolated result, 
+    because other joint positions describe skeleton shape rather than movement. 
+    Movement is described and interpolated through rotations. """
     p_slice = slice(indices["p_start_idx"], indices["p_end_idx"])
 
     positions_new = positions.clone()

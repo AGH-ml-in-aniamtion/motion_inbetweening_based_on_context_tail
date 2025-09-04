@@ -110,7 +110,7 @@ class TestMyExperiment(unittest.TestCase):
                 mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
                     self.config, self.dtype, self.device)
 
-                atten_mask = context_model.get_attention_mask(
+                atten_mask = context_model.get_attention_mask_slice(
                     window_len=processing_window_len,
                     interpolation_window_slice=interpolation_window_slice,
                     device= self.device)
@@ -121,7 +121,7 @@ class TestMyExperiment(unittest.TestCase):
                 positions, rotations = data_utils.to_start_centered_data(
                     positions, rotations, self.interpolation_window_offset)
 
-                pos_new_normal, rot_new_normal = context_model.evaluate(
+                pos_new_normal, rot_new_normal = context_model.evaluate_my_experiment(
                     model=self.model, 
                     positions=positions, 
                     rotations=rotations, 
@@ -147,7 +147,7 @@ class TestMyExperiment(unittest.TestCase):
                 
                 rotations_zeroed = rotations.clone()
                 rotations_zeroed[:, interpolation_window_slice, ...] = 0
-                pos_new_zeroed, rot_new_zeroed = context_model.evaluate(
+                pos_new_zeroed, rot_new_zeroed = context_model.evaluate_my_experiment(
                     model=self.model, 
                     positions=positions_zeroed, 
                     rotations=rotations_zeroed, 

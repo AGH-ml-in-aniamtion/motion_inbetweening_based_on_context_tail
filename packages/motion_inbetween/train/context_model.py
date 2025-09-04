@@ -91,7 +91,7 @@ def get_midway_targets(seq_slice, midway_targets_amount, midway_targets_p):
     return list(targets)
 
 
-def get_attention_mask(window_len, interpolation_window_slice , device, midway_targets=()):
+def get_attention_mask_slice(window_len, interpolation_window_slice , device, midway_targets=()):
     
     atten_mask = torch.zeros(window_len, window_len,
                             device=device, dtype=torch.bool)
@@ -102,7 +102,34 @@ def get_attention_mask(window_len, interpolation_window_slice , device, midway_t
     return atten_mask
 
 
-def get_data_mask(window_len, d_mask, constrained_slices, device, dtype, beg_context_slice, past_context_slice,
+def get_attention_mask(window_len, context_len, target_idx, device,
+                       midway_targets=()):
+    atten_mask = torch.ones(window_len, window_len,
+                            device=device, dtype=torch.bool)
+    atten_mask[:, target_idx] = False
+    atten_mask[:, :context_len] = False
+    atten_mask[:, midway_targets] = False
+    atten_mask = atten_mask.unsqueeze(0)
+
+    # (1, seq, seq)
+    return atten_mask
+
+
+def get_data_mask(window_len, d_mask, constrained_slices,
+                  context_len, target_idx, device, dtype,
+                  midway_targets=()):
+    # 0 for unknown and 1 for known
+    data_mask = torch.zeros((window_len, d_mask), device=device, dtype=dtype)
+    data_mask[:context_len, :] = 1
+    data_mask[target_idx, :] = 1
+
+    for s in constrained_slices:
+        data_mask[midway_targets, s] = 1
+
+    # (seq, d_mask)
+    return data_mask
+
+def get_data_mask_slice(window_len, d_mask, constrained_slices, device, dtype, beg_context_slice, past_context_slice,
                   midway_targets=()):
     # 0 for unknown and 1 for known
     data_mask = torch.zeros((window_len, d_mask), device=device, dtype=dtype)
@@ -377,40 +404,24 @@ def validate_and_save_results(config, model, data_loader, trans_len, past_ctx, i
         writer.writerow([iteration, "gquat", gquat_loss])
         writer.writerow([iteration, "npss", npss_loss])
     return val_loss
-        
-def eval_on_dataset(
-        config,
-        data_loader,
-        model,
-        trans_len, # length of unknown transition to predict
-        beg_contex_len=0, #length of context preceeding prediction
-        past_context_len=0, #length of context after prediction
-        debug=False,
-        post_process=True,
-        #fixed_pred_window_start : Optional[int] = None, # fixed start of prediction window (None for default behavior),
-        save_results=False, #save results to file
-        ):
-    device = data_loader.dataset.device
+ 
+def eval_on_dataset(config, data_loader, model, trans_len,
+                    debug=False, post_process=True, device="cpu"):
     dtype = data_loader.dataset.dtype
 
     indices = config["indices"]
-    target_idx = beg_contex_len + trans_len
+    context_len = config["train"]["context_len"]
+    target_idx = context_len + trans_len
+    seq_slice = slice(context_len, target_idx)
+    window_len = context_len + trans_len + 2
 
-
-    beg_context_slice = slice(0, beg_contex_len)
-    past_context_slice = slice(target_idx, target_idx + past_context_len)
-    
-    seq_slice = slice(beg_contex_len, target_idx)
-    window_len = beg_contex_len + trans_len + past_context_len + 2
     mean, std = get_train_stats_torch(config, dtype, device)
     mean_rmi, std_rmi = rmi.get_rmi_benchmark_stats_torch(
         config, dtype, device)
 
-
     # attention mask
-    raise NotImplementedError("Attention mask change arguments")
     atten_mask = get_attention_mask(
-        window_len, beg_contex_len, target_idx, device, past_context_len) 
+        window_len, context_len, target_idx, device)
 
     data_indexes = []
     gpos_loss = []
@@ -430,55 +441,24 @@ def eval_on_dataset(
         foot_contact = foot_contact[..., :window_len, :]
 
         positions, rotations = data_utils.to_start_centered_data(
-            positions, rotations, seq_slice.start) 
+            positions, rotations, context_len)
 
         pos_new, rot_new = evaluate(
-            model=model, 
-            positions=positions, 
-            rotations=rotations, 
-            seq_slice=seq_slice,
-            indices=indices, 
-            mean=mean, 
-            std=std, 
-            atten_mask=atten_mask, 
-            beg_context_slice=beg_context_slice, 
-            past_context_slice=past_context_slice, 
-            post_process=post_process) 
+            model, positions, rotations, seq_slice,
+            indices, mean, std, atten_mask, post_process)
 
         (gpos_batch_loss, gquat_batch_loss,
-        npss_batch_loss, npss_batch_weights) = \
+         npss_batch_loss, npss_batch_weights) = \
             benchmark.get_rmi_style_batch_loss(
                 positions, rotations, pos_new, rot_new, parents,
-                beg_contex_len, target_idx, mean_rmi, std_rmi
-        ) 
+                context_len, target_idx, mean_rmi, std_rmi
+        )
 
         gpos_loss.append(gpos_batch_loss)
         gquat_loss.append(gquat_batch_loss)
         npss_loss.append(npss_batch_loss)
         npss_weights.append(npss_batch_weights)
         data_indexes.extend(data_idx.tolist())
-        
-        #if not exist make dir 
-        if save_results:
-            for b in range(len(positions)):
-                dirname = "./{}/beg{}_past{}_fixed{}".format(
-                    config["name"], beg_contex_len, past_context_len, 0)
-                #dirname = os.path.join(config["workspace"], dirname)
-                
-                if os.path.exists(dirname) is False:
-                    os.makedirs(dirname)
-                    
-                json_path_gt = "output_{}_batchn{}_iter{}_gt.json".format(i, i, b)
-                json_path_gt = os.path.join(dirname, json_path_gt)
-                visualization.save_data_to_json(
-                    json_path_gt, positions[b], rotations[b],
-                    foot_contact[b], parents)
-
-                json_path = "output_{}_batchn{}_iter{}.json".format(i, i, b)
-                json_path = os.path.join(dirname, json_path)
-                visualization.save_data_to_json(
-                    json_path, pos_new[b], rot_new[b],
-                    foot_contact[b], parents)
 
     gpos_loss = np.concatenate(gpos_loss, axis=0)
     gquat_loss = np.concatenate(gquat_loss, axis=0)
@@ -504,7 +484,119 @@ def eval_on_dataset(
     else:
         return gpos_loss.mean(), gquat_loss.mean(), npss_loss.sum()
 
+
 def evaluate(model, positions, rotations, seq_slice, indices,
+             mean, std, atten_mask, post_process=True,
+             midway_targets=()):
+    """
+    Generate transition animation.
+
+    positions and rotation should already been preprocessed using
+    motion_inbetween.data.utils.to_start_centered_data().
+
+    positions, shape: (batch, seq, joint, 3) and
+    rotations, shape: (batch, seq, joint, 3, 3)
+    is a mixture of ground truth and placeholder data.
+
+    There are two constraint mode:
+    1) fully constrained: at constrained midway target frames, input values of
+        all joints should be the same as output values.
+    2) partially constrained: only selected joints' input value are kept in
+        output (e.g. only constrain root joint).
+
+    At context frames, target frame and midway target frames, ground truth
+    data should be provided (in partially constrained mode, only provide ground
+    truth value of constrained dimensions).
+
+    The placeholder values:
+    - for positions: set to zero
+    - for rotations: set to identity matrix
+
+    Args:
+        model (nn.Module): context model
+        positions (tensor): (batch, seq, joint, 3)
+        rotations (tensor): (batch, seq, joint, 3, 3)
+        seq_slice (slice): sequence slice where motion will be predicted
+        indices (dict): config which defines the meaning of input's dimensions
+        mean (tensor): mean of model input
+        std (tensor): std of model input
+        atten_mask (tensor): (1, seq, seq) model attention mask
+        post_process (bool): Whether post processing is enabled or not.
+            Defaults to True.
+        midway_targets (list of int): list of midway targets (constrained
+            frames indexes).
+
+    Returns:
+        tensor, tensor: new positions, new rotations with predicted animation
+        with same shape as input.
+    """
+    dtype = positions.dtype
+    device = positions.device
+    window_len = positions.shape[-3]
+    context_len = seq_slice.start
+    target_idx = seq_slice.stop
+
+    # If current context model is not trained with constrants,
+    # ignore midway_targets.
+    if midway_targets and not model.constrained_slices:
+        print(
+            "WARNING: Context model is not trained with constraints, but "
+            "midway_targets is provided with values while calling evaluate()! "
+            "midway_targets is ignored!"
+        )
+        midway_targets = []
+
+    with torch.no_grad():
+        model.eval()
+
+        if midway_targets:
+            midway_targets.sort()
+            atten_mask = atten_mask.clone().detach()
+            atten_mask[0, :, midway_targets] = False
+
+        # prepare model input
+        x_orig = get_model_input(positions, rotations)
+
+        # zscore
+        x_zscore = (x_orig - mean) / std
+
+        # data mask (seq, 1)
+        data_mask = get_data_mask(
+            window_len, model.d_mask, model.constrained_slices, context_len,
+            target_idx, device, dtype, midway_targets)
+
+        keyframe_pos_idx = get_keyframe_pos_indices(
+            window_len, seq_slice, dtype, device)
+
+        x = torch.cat([
+            x_zscore * data_mask,
+            data_mask.expand(*x_zscore.shape[:-1], data_mask.shape[-1])
+        ], dim=-1)
+
+        p_slice = slice(indices["p_start_idx"], indices["p_end_idx"])
+        x = set_placeholder_root_pos(x, seq_slice, midway_targets, p_slice)
+
+        # calculate model output y
+        model_out = model(x, keyframe_pos_idx, mask=atten_mask)
+        y = x_zscore.clone().detach()
+        y[..., seq_slice, :] = model_out[..., seq_slice, :]
+
+        if post_process:
+            y = train_utils.anim_post_process(y, x_zscore, seq_slice)
+
+        # reverse zscore
+        y = y * std + mean
+
+        # new pos and rot
+        pos_new = train_utils.get_new_positions(
+            positions, y, indices, seq_slice)
+        rot_new = train_utils.get_new_rotations(
+            y, indices, rotations, seq_slice)
+
+        return pos_new, rot_new
+
+
+def evaluate_my_experiment(model, positions, rotations, seq_slice, indices,
              mean, std, atten_mask, beg_context_slice, past_context_slice, post_process=True,
              midway_targets=()):
     """
@@ -583,7 +675,7 @@ def evaluate(model, positions, rotations, seq_slice, indices,
         # print("x_zscore abs mean:", x_zscore[..., seq_slice, :].abs().mean())
 
         # data mask (seq, 1)
-        data_mask = get_data_mask(
+        data_mask = get_data_mask_slice(
             window_len=window_len, 
             d_mask=model.d_mask, 
             constrained_slices=model.constrained_slices, 

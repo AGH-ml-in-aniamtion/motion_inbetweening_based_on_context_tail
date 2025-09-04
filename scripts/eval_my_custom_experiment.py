@@ -60,7 +60,7 @@ if __name__ == "__main__":
     
     context_len = config["train"]["context_len"] # 10
     interpolation_window_offset = context_len
-    past_contexts = range(0,10) #
+    past_contexts = range(1,10) #
     transitions = [15,30,45]
     
     
@@ -78,9 +78,7 @@ if __name__ == "__main__":
             beg_context_slice = slice(interpolation_window_offset-beg_context_len, interpolation_window_offset)
             past_context_slice = slice(target_idx, target_idx+past_context_len)
 
-            #TODO: use slice!!!
-
-            atten_mask = context_model.get_attention_mask(
+            atten_mask = context_model.get_attention_mask_slice(
                 window_len=processing_window_len,
                 interpolation_window_slice=interpolation_window_slice,
                 device=device)
@@ -103,7 +101,7 @@ if __name__ == "__main__":
                 positions, rotations = data_utils.to_start_centered_data(
                     positions, rotations, interpolation_window_offset)
 
-                pos_new, rot_new = context_model.evaluate(
+                pos_new, rot_new = context_model.evaluate_my_experiment(
                     model=model,
                     positions=positions,
                     rotations=rotations,
