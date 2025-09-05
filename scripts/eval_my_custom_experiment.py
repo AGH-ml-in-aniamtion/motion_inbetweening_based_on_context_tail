@@ -28,8 +28,8 @@ if __name__ == "__main__":
                                      "Post-processing is applied by default.")
     parser.add_argument("config", help="config name")
     parser.add_argument("-s", "--dataset",
-                        help="dataset name (defaultwqq=benchmark)",
-                        default="benchmark")
+                        help="dataset name (default=benchmark_past_ctx)",
+                        default="benchmark_past_ctx")
     parser.add_argument("-i", "--index", type=int, help="data index")
     parser.add_argument("-t", "--trans", type=int, default=30,
                         help="transition length (default=30)")

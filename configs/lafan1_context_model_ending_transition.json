@@ -55,6 +55,15 @@
             "window": 65,
             "offset": 40,
             "start_frame": 0
+        },
+        "benchmark_past_ctx": {
+            "bvh_folder": "..\\datasets\\lafan1",
+            "actors": [
+                "subject5"
+            ],
+            "window": 66,
+            "offset": 40,
+            "start_frame": 0
         }
     },
     "train": {
