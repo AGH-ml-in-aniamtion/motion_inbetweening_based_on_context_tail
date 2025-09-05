@@ -57,31 +57,26 @@ if __name__ == "__main__":
     debug = args.debug
     post_process = args.post_processing
     save_results = False
-    
-    context_len = config["train"]["context_len"] # 10
-    interpolation_window_offset = context_len
-    past_contexts = range(1,10) #
-    transitions = [15,30,45]
-    
-    
+
+    context_len = config["train"]["context_len"] + 1  # target frame included - 11
+    past_contexts = range(1, 11)  # minimum 1 (target_frame, maximum 10)
+    transitions = [5, 15, 30, 45]
+
+
     #i can get per animation result if i compare indexes of dataset with appended batched results
     for trans_len in transitions:
         for past_context_len in past_contexts:
-
-            config["train"]["past_context"] = past_context_len #0
-            beg_context_len = context_len - past_context_len # 10
             
-            target_idx = interpolation_window_offset + trans_len #  25
-            interpolation_window_slice = slice(interpolation_window_offset, target_idx)  # 10:25
-            processing_window_len = interpolation_window_offset + trans_len + interpolation_window_offset
+            window_offset = past_context_len-1# offsetting whole model input window so it matches with different past context lengths
+            beg_context_len = context_len - past_context_len
+            
+            assert beg_context_len+past_context_len == context_len
+            assert window_offset+beg_context_len+1 == context_len
+ 
 
-            beg_context_slice = slice(interpolation_window_offset-beg_context_len, interpolation_window_offset)
-            past_context_slice = slice(target_idx, target_idx+past_context_len)
+            window_len = beg_context_len + trans_len + past_context_len + 1 # 1 extra frame for model predicting how movement continues
+            processing_window_slice = slice(window_offset, window_offset+window_len)
 
-            atten_mask = context_model.get_attention_mask_slice(
-                window_len=processing_window_len,
-                interpolation_window_slice=interpolation_window_slice,
-                device=device)
 
             data_indexes = []
             gpos_loss = []
@@ -94,13 +89,33 @@ if __name__ == "__main__":
                 (positions, rotations, _, _,
                     foot_contact, parents, data_idx) = data
                 parents = parents[0] 
-                positions = positions[..., :processing_window_len, :, :] #[batch, window, :,:]
-                rotations = rotations[..., :processing_window_len, :, :, :]
-                foot_contact = foot_contact[..., :processing_window_len, :]
-
+                
+                if positions.shape[1] < window_len + window_offset:
+                    print("Skipping sequence ", i, " of length ", positions.shape[1], " because it is shorter than required window length ", window_len + window_offset)
+                    continue
+                
+                
+                positions = positions[..., processing_window_slice, :, :] #[batch, window, :,:]
+                rotations = rotations[..., processing_window_slice, :, :, :]
+                foot_contact = foot_contact[..., processing_window_slice, :]
+                
+                beg_context_slice = slice(0, beg_context_len)
+                target_idx = beg_context_len + trans_len
+                past_context_slice = slice(target_idx, target_idx+past_context_len)
+                interpolation_window_slice = slice(beg_context_slice.stop, past_context_slice.start)
+                
+                atten_mask = context_model.get_attention_mask_slice(
+                    window_len=window_len,
+                    pred_context_slice=beg_context_slice,
+                    past_context_slice=past_context_slice,
+                    device=device)
+                
                 positions, rotations = data_utils.to_start_centered_data(
-                    positions, rotations, interpolation_window_offset)
-
+                    positions, rotations, interpolation_window_slice.start)
+                
+                assert atten_mask.shape[1] == window_len 
+                assert positions.shape[1] == window_len and rotations.shape[1] == window_len 
+                
                 pos_new, rot_new = context_model.evaluate_my_experiment(
                     model=model,
                     positions=positions,

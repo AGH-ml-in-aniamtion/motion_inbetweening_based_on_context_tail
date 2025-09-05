@@ -91,11 +91,12 @@ def get_midway_targets(seq_slice, midway_targets_amount, midway_targets_p):
     return list(targets)
 
 
-def get_attention_mask_slice(window_len, interpolation_window_slice , device, midway_targets=()):
+def get_attention_mask_slice(window_len, pred_context_slice , past_context_slice, device, midway_targets=()):
     
-    atten_mask = torch.zeros(window_len, window_len,
+    atten_mask = torch.ones(window_len, window_len,
                             device=device, dtype=torch.bool)
-    atten_mask[:, interpolation_window_slice] = True
+    atten_mask[:, pred_context_slice] = False
+    atten_mask[:, past_context_slice] = False
     atten_mask[:, midway_targets] = False
     atten_mask = atten_mask.unsqueeze(0)
     # (1, seq, seq)
@@ -430,14 +431,12 @@ def eval_on_dataset(config, data_loader, model, trans_len,
     npss_weights = []
 
     for i, data in enumerate(data_loader, 0):
-        (positions, rotations, global_positions, global_rotations,
+        (positions, rotations, _, _,
             foot_contact, parents, data_idx) = data
         parents = parents[0]
 
         positions = positions[..., :window_len, :, :]
         rotations = rotations[..., :window_len, :, :, :]
-        global_positions = global_positions[..., :window_len, :, :]
-        global_rotations = global_rotations[..., :window_len, :, :, :]
         foot_contact = foot_contact[..., :window_len, :]
 
         positions, rotations = data_utils.to_start_centered_data(

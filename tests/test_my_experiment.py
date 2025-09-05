@@ -14,6 +14,8 @@ from motion_inbetween.train import context_model, rmi
 from motion_inbetween.config import load_config_by_name
 from motion_inbetween.model import ContextTransformer
 from motion_inbetween.data import utils_torch as data_utils
+from motion_inbetween.train import utils as train_utils
+
 import matplotlib.pyplot as plt
 
     
@@ -31,72 +33,257 @@ class TestMyExperiment(unittest.TestCase):
         self.context_len = 10
         self.interpolation_window_offset = self.context_len
         self.dtype = torch.float32
+        
 
-        # Dummy test tensors
-        self.positions = torch.rand(1, 65, 22, 3, dtype=self.dtype)
-        for i in range(self.positions.shape[1]):
-            self.positions[0, i, 1:, :] = self.positions[0, 0, 1:, :]
-        self.rotations = torch.rand(1, 65, 22, 3, 3, dtype=self.dtype)
-        self.parents = torch.tensor(
-            [-1, 0, 1, 2, 3, 0, 5, 6, 7, 0, 9, 10, 11, 12, 11, 14, 15, 16,
-             11, 18, 19, 20]
-        )
+        dataset, data_loader, sequence_filenames = train_utils.init_bvh_dataset_w_file_info(
+            self.config, "benchmark", device=self.device)
+
+        self.dataset = dataset
+        self.data_loader = data_loader
+        self.sequence_filenames = sequence_filenames
+
+        data = next(iter(data_loader))
+        (self.positions, self.rotations, self.global_positions, self.global_rotations,
+         self.foot_contact, self.parents, _) = data
+        
+        
+        self.mean, self.std = context_model.get_train_stats_torch(self.config, self.dtype, self.device)
+        self.mean_rmi, self.std_rmi = rmi.get_rmi_benchmark_stats_torch(
+            self.config, self.dtype, self.device)
+
+        self.indices = self.config["indices"]
+
+    def test_attention_mask(self):
+        window_len = 65
+        context_len = 10
+        for interpolation_length in [5, 15, 30, 45]:
+            target_idx = context_len + interpolation_length
+            
+            get_attention_mask_slice = context_model.get_attention_mask_slice(
+                window_len=window_len,
+                pred_context_slice=slice(0, context_len),
+                past_context_slice=slice(target_idx, target_idx+1),
+                device=self.device
+            )
+            #plt.imshow(get_attention_mask_slice[0])
+            #plt.show()
+            get_attention_mask = context_model.get_attention_mask(
+                window_len=window_len,
+                context_len=context_len,
+                target_idx=target_idx,
+                device=self.device
+            )
+            #plt.imshow(get_attention_mask[0])
+            #plt.show()
+            self.assertEqual(
+                (get_attention_mask_slice != get_attention_mask).sum().item(), 0,
+                msg=f"Attention masks do not match for interpolation length {interpolation_length}"
+            )
+            
+    def test_data_masks(self):
+        window_len = 65
+        d_mask = self.model.d_mask
+        constrained_slices = self.model.constrained_slices
+        device = self.device
+        dtype = self.dtype
+        
+        beg_context_len = 10
         trans_len = 15
+        target_idx = beg_context_len + trans_len
         
-        self.mean_rmi = torch.tensor([[-1.3550e-16,  8.2261e+01,  2.9567e-17],
-        [ 1.3790e+00,  8.2255e+01, -8.7167e+00],
-        [ 1.2952e+01,  4.8039e+01, -1.3106e+01],
-        [-1.9123e+00,  1.7409e+01, -1.1137e+01],
-        [ 7.7733e+00,  9.0416e+00, -1.3457e+01],
-        [ 1.5946e+00,  8.2281e+01,  8.6834e+00],
-        [ 1.3283e+01,  4.7551e+01,  1.2050e+01],
-        [-2.2272e+00,  1.7239e+01,  1.1537e+01],
-        [ 7.5058e+00,  9.2053e+00,  1.4457e+01],
-        [-1.7892e+00,  8.8648e+01, -3.6445e-03],
-        [ 4.7643e-01,  9.9766e+01, -7.2591e-02],
-        [ 4.2435e+00,  1.0988e+02, -1.7152e-01],
-        [ 1.4634e+01,  1.2862e+02, -4.5334e-01],
-        [ 2.0094e+01,  1.3648e+02, -1.6513e-01],
-        [ 1.1147e+01,  1.2492e+02, -5.2614e+00],
-        [ 1.0541e+01,  1.2366e+02, -1.4205e+01],
-        [ 6.3485e+00,  9.9732e+01, -2.4182e+01],
-        [ 1.6915e+01,  8.7572e+01, -2.2820e+01],
-        [ 1.1370e+01,  1.2486e+02,  4.5336e+00],
-        [ 1.1296e+01,  1.2274e+02,  1.3351e+01],
-        [ 6.6718e+00,  9.9588e+01,  2.3196e+01],
-        [ 1.6639e+01,  8.7020e+01,  2.1650e+01]], dtype=self.dtype)
-        self.std_rmi = torch.tensor([[47.0959, 28.0501, 23.8774],
-        [47.0970, 28.2485, 24.1586],
-        [49.8518, 23.5715, 28.0785],
-        [54.2343, 21.4503, 30.8202],
-        [56.3064, 20.8736, 32.9498],
-        [47.3081, 28.1009, 24.3212],
-        [49.9828, 23.7494, 28.1126],
-        [54.3852, 21.2752, 30.6427],
-        [56.3387, 20.8057, 32.7585],
-        [47.0860, 28.9321, 23.7596],
-        [46.9042, 30.7817, 23.9746],
-        [46.9091, 32.8452, 24.6356],
-        [47.7384, 38.6454, 27.5110],
-        [48.4736, 41.0710, 29.4982],
-        [47.5560, 37.0727, 26.6091],
-        [48.0217, 37.0878, 26.9706],
-        [50.4696, 37.1883, 28.2626],
-        [51.3727, 39.6318, 31.9564],
-        [47.6694, 37.0179, 26.7824],
-        [48.2721, 36.9326, 27.3811],
-        [51.1598, 37.6890, 28.8818],
-        [51.8224, 40.3614, 32.6812]], dtype=self.dtype)
-
-        self.indices = {'r_start_idx': 0, 'r_end_idx': 132, 'p_start_idx': 132, 'p_end_idx': 135, 'c_start_idx': 135, 'c_end_idx': 139}
-
+        baseline_d_mask = context_model.get_data_mask(
+            window_len=window_len,
+            d_mask=d_mask,
+            constrained_slices=constrained_slices,
+            context_len=beg_context_len,
+            target_idx=target_idx,
+            device=device,
+            dtype=dtype
+        )
         
+        my_d_mask = context_model.get_data_mask_slice(
+            window_len=window_len,
+            d_mask=d_mask,
+            constrained_slices=constrained_slices,
+            beg_context_slice=slice(0, beg_context_len),
+            past_context_slice=slice(target_idx, target_idx+1),
+            device=device,
+            dtype=dtype
+        )
+        self.assertEqual(
+                (baseline_d_mask != my_d_mask).sum().item(), 0,
+                msg=f"Data masks do not match"
+            )
+
+    def test_evaluation_functions(self):
+        model = self.model
+        positions = self.positions
+        rotations = self.rotations
+        indices = self.indices
+        device = self.device
+        post_process = False
+        
+        beg_context_len = self.context_len
+        beg_context_slice = slice(0, beg_context_len)
+        trans_len = 15
+        target_idx = beg_context_len + trans_len 
+        past_context_len = 1
+        past_context_slice = slice(target_idx, target_idx + past_context_len)
+        seq_slice = slice(self.context_len, target_idx)
+        
+        
+        window_len = beg_context_len + trans_len + past_context_len + 2
+                
+        atten_mask = context_model.get_attention_mask(
+            window_len=window_len,
+            context_len=beg_context_len,
+            target_idx=target_idx,
+            device=device
+        )
+        atten_mask_slice = context_model.get_attention_mask_slice(
+            window_len=window_len,
+            pred_context_slice=beg_context_slice,
+            past_context_slice=past_context_slice,
+            device=device
+        )
+        self.assertEqual(
+                (atten_mask != atten_mask_slice).sum().item(), 0,
+                msg=f"Attention masks do not match"
+            )
+
+        positions = positions[..., :window_len, :, :]
+        rotations = rotations[..., :window_len, :, :, :]
+        positions, rotations = data_utils.to_start_centered_data(
+            positions, rotations, beg_context_len)
+
+        pos_new_baseline, rot_new_baseline = context_model.evaluate(
+            model=model, 
+            positions=positions,
+            rotations=rotations, 
+            seq_slice=seq_slice,
+            indices=indices,
+            mean=self.mean,
+            std=self.std,
+            atten_mask=atten_mask,
+            post_process=post_process)
+
+        pos_new, rot_new = context_model.evaluate_my_experiment(
+            model=model,
+            positions=positions,
+            rotations=rotations,
+            seq_slice=seq_slice,
+            indices=indices,
+            mean=self.mean,
+            std=self.std,
+            atten_mask=atten_mask,
+            beg_context_slice=beg_context_slice,
+            past_context_slice=past_context_slice,
+            post_process=post_process)  #[32, 35, 22, 3]), torch.Size([32, 35, 22, 3, 3]) 
+        
+        self.assertTrue( (pos_new_baseline - pos_new).abs().sum() == 0 )
+        self.assertTrue( (rot_new_baseline - rot_new).abs().sum() == 0 )
+
+    def test_baseline_eval_against_my_experiment(self):
+        #eval on dataset
+        config = self.config
+        model = self.model
+        indices = config["indices"]
+        
+        beg_context_len = config["train"]["context_len"]
+        trans_len = self.trans_len
+        device = self.device
+        post_process = False
+        
+        target_idx = beg_context_len + trans_len
+        seq_slice = slice(beg_context_len, target_idx)
+        window_len_baseline = beg_context_len + trans_len + 2
+
+        # attention mask
+        atten_mask_baseline = context_model.get_attention_mask(
+            window_len_baseline, beg_context_len, target_idx, device)
+
+        (positions, rotations, parents) = (self.positions, self.rotations, self.parents)
+        parents = parents[0]
+
+        positions_baseline = positions[..., :window_len_baseline, :, :]
+        rotations_baseline = rotations[..., :window_len_baseline, :, :, :]
+
+        positions_baseline, rotations_baseline = data_utils.to_start_centered_data(
+            positions_baseline, rotations_baseline, beg_context_len)
+
+        pos_new_baseline, rot_new_baseline = context_model.evaluate(
+            model, positions_baseline, rotations_baseline, seq_slice,
+            indices, self.mean, self.std, atten_mask_baseline, post_process)
+
+        (gpos_batch_loss, gquat_batch_loss,
+        npss_batch_loss, npss_batch_weights) = \
+            benchmark.get_rmi_style_batch_loss(
+                positions_baseline, rotations_baseline, pos_new_baseline, rot_new_baseline, parents,
+                beg_context_len, target_idx, self.mean_rmi, self.std_rmi
+        )
+        gpos_loss_baseline = np.mean(gpos_batch_loss)
+        gquat_loss_baseline = np.mean(gquat_batch_loss)
+        npss_weights = npss_batch_weights / np.sum(npss_batch_weights)      # (batch, dim)
+        npss_loss_baseline = np.sum(npss_batch_loss * npss_weights, axis=-1)   # (batch, )
+
+##############################################
+        #my experiment on same data############################################################################################
+####################################################
+
+        context_len = config["train"]["context_len"] + 1  # target frame included
+        interpolation_window_offset = context_len - 1
+        past_context_len = 1
+    
+        beg_context_len = context_len - past_context_len # 10
+        
+        target_idx = interpolation_window_offset + trans_len #  25
+        interpolation_window_slice = slice(interpolation_window_offset, target_idx)  # 10:25
+        processing_window_len = interpolation_window_offset + trans_len + interpolation_window_offset
+
+        beg_context_slice = slice(interpolation_window_offset-beg_context_len, interpolation_window_offset)
+        past_context_slice = slice(target_idx, target_idx+past_context_len)
+
+        atten_mask = context_model.get_attention_mask_slice(
+            window_len=processing_window_len,
+            pred_context_slice=beg_context_slice,
+            past_context_slice=past_context_slice,
+            device=device)
+
+        (positions, rotations, foot_contact, parents) = (self.positions, self.rotations, self.foot_contact, self.parents)
+        parents = parents[0] 
+        positions = positions[..., :processing_window_len, :, :] #[batch, window, :,:]
+        rotations = rotations[..., :processing_window_len, :, :, :]
+        foot_contact = foot_contact[..., :processing_window_len, :]
+
+        positions, rotations = data_utils.to_start_centered_data(
+            positions, rotations, interpolation_window_offset)
+
+        pos_new, rot_new = context_model.evaluate_my_experiment(
+            model=model,
+            positions=positions,
+            rotations=rotations,
+            seq_slice=interpolation_window_slice,
+            indices=indices,
+            mean=self.mean,
+            std=self.std,
+            atten_mask=atten_mask,
+            beg_context_slice=beg_context_slice,
+            past_context_slice=past_context_slice,
+            #past_context_len=past_context_len,
+            post_process=post_process)  #[32, 35, 22, 3]), torch.Size([32, 35, 22, 3, 3]) 
+
+        (gpos_batch_loss, gquat_batch_loss,
+        npss_batch_loss, npss_batch_weights) = \
+            benchmark.get_rmi_style_batch_loss_slice(
+                positions=positions, rotations=rotations, pos_new=pos_new, rot_new=rot_new, parents=parents,
+                interpolation_window_slice=interpolation_window_slice, mean_rmi=self.mean_rmi, std_rmi=self.std_rmi
+            )
+            
     def test_model_masks_evaluation(self):
             
         for trans_len in [15,30,45]:
             for past_context_len in range(1,10):
                 
-                self.config["train"]["past_context"] = past_context_len #0
                 beg_context_len = self.context_len - past_context_len # 10
                 
                 target_idx = self.interpolation_window_offset + trans_len #  25
@@ -112,7 +299,8 @@ class TestMyExperiment(unittest.TestCase):
 
                 atten_mask = context_model.get_attention_mask_slice(
                     window_len=processing_window_len,
-                    interpolation_window_slice=interpolation_window_slice,
+                    pred_context_slice=beg_context_slice,
+                    past_context_slice=past_context_slice,
                     device= self.device)
                 
                 positions = self.positions[..., :processing_window_len, :, :].clone() #[batch, window, :,:]
@@ -137,7 +325,7 @@ class TestMyExperiment(unittest.TestCase):
                 (gpos_batch_loss_normal, gquat_batch_loss_normal,
                 npss_batch_loss_normal, npss_batch_weights_normal) = \
                     benchmark.get_rmi_style_batch_loss_slice(
-                        positions=positions, rotations=rotations, pos_new=pos_new_normal, rot_new=rot_new_normal, parents=self.parents,
+                        positions=positions, rotations=rotations, pos_new=pos_new_normal, rot_new=rot_new_normal, parents=self.parents[0],
                         interpolation_window_slice=interpolation_window_slice, mean_rmi=mean_rmi, std_rmi=std_rmi
                     )
                 
@@ -163,7 +351,7 @@ class TestMyExperiment(unittest.TestCase):
                 (gpos_batch_loss_zeroed, gquat_batch_loss_zeroed,
                 npss_batch_loss_zeroed, npss_batch_weights_zeroed) = \
                     benchmark.get_rmi_style_batch_loss_slice(
-                        positions=positions, rotations=rotations, pos_new=pos_new_zeroed, rot_new=rot_new_zeroed, parents=self.parents,
+                        positions=positions, rotations=rotations, pos_new=pos_new_zeroed, rot_new=rot_new_zeroed, parents=self.parents[0],
                         interpolation_window_slice=interpolation_window_slice, mean_rmi=mean_rmi, std_rmi=std_rmi
                     )
                 # positions_delta = torch.abs(pos_new_normal - pos_new_zeroed)
